@@ -13,7 +13,6 @@
   "containerEnv": {
     "DEVCONTAINER": "true",
     "FIREWORKS_API_KEY": "${localEnv:FIREWORKS_API_KEY}",
-    "MOONSHOT_API_KEY": "${localEnv:MOONSHOT_API_KEY}",
     "OPENCODE_CONFIG": "${containerWorkspaceFolder}/.opencode/config.json",
     "REPO_PATH": "${containerWorkspaceFolder}"
   },
@@ -22,7 +21,8 @@
       "extensions": [
         "github.vscode-github-actions",
         "skellock.just",
-        "sst-dev.opencode"
+        "sst-dev.opencode",
+        "yzhang.markdown-all-in-one"
       ]
     }
   },

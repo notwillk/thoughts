@@ -17,7 +17,7 @@ clean *args:
 [no-exit-message]
 doctor *args:
     @case "{{args}}" in \
-        ""|"--fix") checksy --config=doctor.checksy.yaml diagnose {{args}} ;; \
+        ""|"--fix") checksy --config=doctor.checksy.yaml check {{args}} ;; \
         *) echo "Usage: just doctor [--fix]" >&2; exit 1 ;; \
     esac
 
@@ -32,8 +32,8 @@ format *args:
 [no-exit-message]
 static *args:
     @case "{{args}}" in \
-        "") checksy --config=static.checksy.yaml diagnose ;; \
-        "--fix") checksy --config=static.checksy.yaml diagnose --fix ;; \
+        "") checksy --config=static.checksy.yaml check ;; \
+        "--fix") checksy --config=static.checksy.yaml check --fix ;; \
         *) echo "Usage: just static [--fix]" >&2; exit 1 ;; \
     esac
 
@@ -41,7 +41,7 @@ static *args:
 test *args:
     @case "{{args}}" in \
         "--watch") watchexec $([ -f .testignore ] && echo '--ignore-file .testignore') -- just test ;; \
-        *) checksy --config=test.checksy.yaml diagnose ;; \
+        *) checksy --config=test.checksy.yaml check ;; \
     esac
 
 help:

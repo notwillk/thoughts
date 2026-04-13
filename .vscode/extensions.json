@@ -2,6 +2,7 @@
   "recommendations": [
     "github.vscode-github-actions",
     "skellock.just",
-    "sst-dev.opencode"
+    "sst-dev.opencode",
+    "yzhang.markdown-all-in-one"
   ]
 }
