@@ -5,7 +5,7 @@
 **Unless explicitly stated otherwise, all user requests refer to the PRD (Product Requirements Document).**
 
 When the user makes a request:
-- **Assume they are talking about the PRD** in `prds/secret-server/PRD.md`
+- **Assume they are talking about the PRD** in `prds/hostvault/PRD.md`
 - **Implement the description** - actually modify the PRD to reflect the changes they describe
 - Do not just discuss or analyze - make the actual changes to the document
 
@@ -39,3 +39,8 @@ Only treat the following as NOT referring to the PRD:
 - Update relevant sections when adding new features
 - Maintain consistent formatting and section numbering
 - Ensure examples and code snippets are accurate
+
+## Visualizations
+
+- Prefer **Mermaid.js** for creating diagrams (block diagrams, flow charts, sequence diagrams, etc.)
+- Mermaid diagrams are text-based, version-controllable, and render natively in most modern documentation platforms

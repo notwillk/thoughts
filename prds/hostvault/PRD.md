@@ -1,8 +1,8 @@
-# Secret Server - Product Requirements Document
+# HostVault - Product Requirements Document
 
 ## 1. Overview
 
-The **Secret Server** is a secure environment variable distribution system consisting of:
+The **HostVault** is a secure environment variable distribution system consisting of:
 - **Server**: A macOS GUI application that stores sensitive environment variables, enforces a strict allowlist of accessible env var names, and requires biometric authentication (Touch ID / Face ID / Passcode) before authorizing access requests
 - **Client**: A Linux CLI tool (ARM/x86) that requests environment variables from the server and can execute commands with those env vars set (following the `env` tool pattern with `--` separator)
 
@@ -12,8 +12,8 @@ The system uses a Unix domain socket for communication and implements a multi-la
 3. **Explicit Authorization**: User must approve each request after biometric authentication
 
 **CLI Usage Patterns**:
-- **Execution Mode**: `secretcli ENV1 ENV2 -- command-to-run` - Requests env vars and executes the command with those vars set
-- **Inspection Mode**: `secretcli ENV1 ENV2` - Requests env vars and outputs them (requires same auth flow, but no command execution)
+- **Execution Mode**: `hv ENV1 ENV2 -- command-to-run` - Requests env vars and executes the command with those vars set
+- **Inspection Mode**: `hv ENV1 ENV2` - Requests env vars and outputs them (requires same auth flow, but no command execution)
 
 This design ensures that even if a client is compromised, only pre-approved env var names can be targeted, and even then, the attacker's requests will be blocked without physical biometric verification from the user.
 
@@ -39,6 +39,8 @@ This design ensures that even if a client is compromised, only pre-approved env 
 - [ ] Client receives appropriate status codes for denied/approved requests (including allowlist violations)
 - [ ] Support for multiple concurrent client connections
 - [ ] Secrets are encrypted at rest in macOS Keychain
+- [ ] Server GUI collects access logs including successful requests, failed attempts, and authentication failures
+- [ ] Server GUI provides ability to view and purge access logs with date range filtering
 
 ---
 
@@ -46,70 +48,66 @@ This design ensures that even if a client is compromised, only pre-approved env 
 
 ### 3.1 High-Level Diagram
 
+```mermaid
+graph TB
+    subgraph macOS["macOS (Server)"]
+        direction TB
+        GUI["GUI App<br/>(Swift/SwiftUI)"] --> AuthEngine["Authorization Engine"]
+
+        subgraph AuthEngine["Authorization Engine"]
+            direction LR
+            BioAuth["Biometric Auth<br/>(Touch ID/Face ID)"] --> UserApproval["User Approval<br/>Dialog"]
+        end
+
+        GUI --> Allowlist["Allowlist<br/>(JSON)"]
+        AuthEngine --> Allowlist
+        AuthEngine --> SecretStore["Secret Store<br/>(Keychain)"]
+
+        Socket["Unix Domain Socket<br/>(/tmp/hostvault.sock)"]
+    end
+
+    SSH["SSH / Local mount"] --> Socket
+
+    subgraph Linux["Linux (Client)"]
+        direction TB
+        CLI["CLI Tool (Rust)"]
+
+        subgraph CLIComponents[" " ]
+            direction LR
+            ArgParser["Arg Parser<br/>(-- check)"] --> SocketClient["Socket Client"]
+            SocketClient --> ResponseHandler["Response Handler<br/>(env injection)"]
+        end
+
+        ResponseHandler --> Output["Output<br/>(stdout)"]
+        ResponseHandler --> CmdExec["Command Executor<br/>(execve with env)"]
+    end
+
+    Socket <--> SocketClient
+
+    style macOS fill:#f0f0f0,stroke:#333
+    style Linux fill:#f0f0f0,stroke:#333
+    style AuthEngine fill:#e8f4f8,stroke:#333
+    style CLIComponents fill:#e8f4f8,stroke:#333
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              macOS (Server)                                   │
-│  ┌──────────────────┐     ┌─────────────────────────────────────────────┐   │
-│  │   GUI App        │────▶│  Authorization Engine                       │   │
-│  │   (Swift/SwiftUI)│     │  ┌─────────────────┐  ┌────────────────┐  │   │
-│  └──────────────────┘     │  │ Biometric Auth  │──▶│ User Approval  │  │   │
-│         │                │  │ (Touch ID/Face) │  │ Dialog         │  │   │
-│         │                │  └─────────────────┘  └────────────────┘  │   │
-│         │                │           │                     │            │   │
-│         └───────────────────────────┼─────────────────────┼────────────    │
-│                                     ▼                     ▼                 │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │   ┌──────────────┐          ┌──────────────┐                       │   │
-│  │   │   Allowlist  │          │ Secret Store │                       │   │
-│  │   │   (JSON)     │          │ (Keychain)   │                       │   │
-│  │   └──────────────┘          └──────────────┘                       │   │
-│  │        │ Check membership          │ Retrieve values                │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-│                                     │                                       │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │           Unix Domain Socket (/tmp/secretserv.sock)                  │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────────────────┘
-                                      │
-                                      │ SSH / Local mount
-                                      ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              Linux (Client)                                 │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │   CLI Tool (Rust)                                                   │   │
-│  │                                                                     │   │
-│  │   ┌─────────────┐   ┌─────────────┐   ┌─────────────────────────┐   │   │
-│  │   │ Arg Parser  │──▶│  Socket     │──▶│  Response Handler       │   │   │
-│  │   │ (-- check)  │   │  Client     │   │  (env injection)        │   │   │
-│  │   └─────────────┘   └─────────────┘   └─────────────────────────┘   │   │
-│  │         │                                   │                       │   │
-│  │         │                                   │                       │   │
-│  │         ▼ (no --)                           ▼ (with --)            │   │
-│  │   ┌─────────────┐                    ┌─────────────────────────┐     │   │
-│  │   │ Output      │                    │   Command Executor    │     │   │
-│  │   │ (stdout)    │                    │   (execve with env)   │     │   │
-│  │   └─────────────┘                    └─────────────────────────┘     │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-│                              Exit codes:                                     │
-│                              - 0: Success (secrets printed or cmd exited 0)│
-│                              - 1: Connection error                           │
-│                              - 2: Authorization denied                         │
-│                              - 3: Timeout                                    │
-│                              - 4: Secret not found                           │
-│                              - 8: Not in allowlist                           │
-│                              - 9: Biometric failed                           │
-│                              - 10: Command not found                         │
-│                              - 11: Command failed                            │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+
+**Exit Codes:**
+- `0`: Success (secrets printed or cmd exited 0)
+- `1`: Connection error
+- `2`: Authorization denied
+- `3`: Timeout
+- `4`: Secret not found
+- `8`: Not in allowlist
+- `9`: Biometric failed
+- `10`: Command not found
+- `11`: Command failed
 
 ### 3.2 Component Breakdown
 
 #### 3.2.1 Server (macOS)
 - **Platform**: macOS 10.15+ (Catalina and later) for Touch ID support
 - **Language**: Swift with SwiftUI for GUI
-- **Socket Path**: `/tmp/secretserv.sock` (configurable)
-- **Allowlist Storage**: JSON file (`~/Library/Application Support/SecretServer/`)
+- **Socket Path**: `/tmp/hostvault.sock` (configurable)
+- **Allowlist Storage**: JSON file (`~/Library/Application Support/HostVault/`)
 - **Secret Storage**: macOS Keychain for secret values (keyed by env var name)
 - **Biometric Auth**: LocalAuthentication framework (Touch ID / Face ID / Passcode)
 - **Health Endpoint**: Simple ping/pong endpoint for availability checks (no auth, <100ms response)
@@ -234,47 +232,54 @@ Before making a full secret request, the client **MUST** send a lightweight heal
 
 ### 4.3 Protocol Flow
 
-```
-┌──────┐                                          ┌────────┐
-│Client│                                          │ Server │
-└──┬───┘                                          └───┬────┘
-   │                                                  │
-   │ 1. Connect to /tmp/secretserv.sock               │
-   │─────────────────────────────────────────────────▶│
-   │                                                  │
-   │ 2. Send HEALTH CHECK request (type: "health")      │
-   │─────────────────────────────────────────────────▶│
-   │                                                  │
-   │ 3. Receive HEALTH OK response (< 500ms)          │
-   │◀─────────────────────────────────────────────────│
-   │    (If timeout or error → EXIT IMMEDIATELY)      │
-   │                                                  │
-   │ 4. Send FULL REQUEST with env var names          │
-   │─────────────────────────────────────────────────▶│
-   │                                                  │
-   │              5. Validate all names against allowlist │
-   │              (Any non-allowlist name → auto-deny)   │
-   │                                                  │
-   │              6. Prompt for biometric auth          │
-   │                 (Touch ID / Face ID / Passcode)    │
-   │                                                  │
-   │              7a. Biometric FAILED → deny immediately│
-   │◀─────────────────────────────────────────────────│
-   │                                                  │
-   │              7b. Biometric SUCCESS → show dialog   │
-   │                 (Authorization GUI with details)    │
-   │                                                  │
-   │ 8. User approves/denies within timeout (30s)     │
-   │                                                  │
-   │ 9a. Approved: Retrieve secrets from Keychain    │
-   │                Send JSON with secret values      │
-   │◀─────────────────────────────────────────────────│
-   │                                                  │
-   │ 9b. Denied: Send JSON with status=denied          │
-   │◀─────────────────────────────────────────────────│
-   │                                                  │
-   │ 10. Close connection                                │
-   │─────────────────────────────────────────────────▶│
+```mermaid
+sequenceDiagram
+    participant Client as Client (Linux CLI)
+    participant Server as Server (macOS)
+    participant BioAuth as Biometric Auth
+    participant User as User
+    participant Allowlist as Allowlist
+    participant Keychain as Keychain
+
+    Client->>Server: 1. Connect to /tmp/hostvault.sock
+    Client->>Server: 2. Send HEALTH CHECK (type: "health")
+    Server-->>Client: 3. HEALTH OK response (< 500ms)
+
+    alt Health check fails
+        Server--xClient: Timeout/Error
+        Note over Client: EXIT IMMEDIATELY (code 1)
+    end
+
+    Client->>Server: 4. Send FULL REQUEST with env var names
+
+    Server->>Allowlist: 5. Validate all names against allowlist
+    Allowlist-->>Server: Membership check result
+
+    alt Not in allowlist
+        Server-->>Client: Deny (not_in_allowlist)
+    else All in allowlist
+        Server->>BioAuth: 6. Prompt for biometric auth
+        BioAuth->>User: Touch ID / Face ID / Passcode
+        User-->>BioAuth: Auth result
+        BioAuth-->>Server: Auth result
+
+        alt Biometric FAILED
+            Server-->>Client: 7a. Deny immediately (biometric_failed)
+        else Biometric SUCCESS
+            Server->>User: 7b. Show authorization dialog
+            User-->>Server: 8. Approve/Deny within timeout (30s)
+
+            alt Approved
+                Server->>Keychain: Retrieve secrets
+                Keychain-->>Server: Secret values
+                Server-->>Client: 9a. Send JSON with secrets (approved)
+            else Denied
+                Server-->>Client: 9b. Send JSON status=denied
+            end
+        end
+    end
+
+    Client->>Server: 10. Close connection
 ```
 
 **Request Processing Flow**:
@@ -361,10 +366,25 @@ The server exposes a simple health check endpoint for client pre-flight checks:
   - "Settings" → Opens preferences
   - "Quit" → Exit application
 
+#### 5.2.1a Access Log Management
+The server GUI must provide comprehensive access log collection and management:
+
+**Log Collection Requirements**:
+- Collect all access attempts including successful and **failed attempts**
+- Log entries must include: timestamp, client hostname, client user, PID, requested env vars, decision (approved/denied), reason for denial, and biometric auth status
+- Failed authentication attempts (biometric failure, timeout, allowlist violations) must be explicitly logged
+- Logs stored locally in JSON Lines format with rotation support
+
+**Log Purge Capabilities**:
+- GUI must provide ability to purge logs by date range (e.g., "older than 30 days")
+- Option to purge all logs with confirmation dialog
+- Purge operation must be logged itself for audit trail completeness
+- Export logs before purge (optional but recommended)
+
 #### 5.2.2 Secret Configuration Panel (Allowlist Management)
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│ Secret Server - Configure Env Vars                                 [+] [-]  │
+│ HostVault - Configure Env Vars                                 [+] [-]  │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
 │  ┌─ Allowlist Configuration ──────────────────────────────────────────┐    │
@@ -448,7 +468,7 @@ The server exposes a simple health check endpoint for client pre-flight checks:
 ### 5.3 Configuration
 
 **Settings Window**:
-- **Socket Path**: Default `/tmp/secretserv.sock`
+- **Socket Path**: Default `/tmp/hostvault.sock`
 - **Authorization Timeout**: Default 30 seconds
 - **Auto-Start**: Launch at login option
 - **Logging Level**: Debug/Info/Warning/Error
@@ -482,6 +502,9 @@ The server exposes a simple health check endpoint for client pre-flight checks:
 - `authorization_approved` / `authorization_denied`
 - `secret_accessed`
 - `error`
+- `authentication_failed` (biometric failure, timeout, or passcode failure)
+- `allowlist_violation` (attempt to access non-allowlisted env var)
+- `log_purged` (when admin purges logs)
 
 ---
 
@@ -493,7 +516,7 @@ The server exposes a simple health check endpoint for client pre-flight checks:
 
 Before any secret request, the CLI **MUST** perform a health check to verify server availability:
 
-1. **Connect to socket** (`/tmp/secretserv.sock`)
+1. **Connect to socket** (`/tmp/hostvault.sock`)
 2. **Send health check request** (type: "health")
 3. **Wait for health OK response** (timeout: 500ms)
    - **If healthy**: Continue with full secret request + auth flow
@@ -513,15 +536,15 @@ The CLI follows the `env` tool pattern. When `--` is provided, the CLI:
 
 ```bash
 # Execute command with env vars set
-secretcli API_KEY_PROD DATABASE_URL -- node server.js
-secretcli AWS_ACCESS_KEY AWS_SECRET_KEY -- terraform apply
-secretcli DATABASE_URL -- psql $DATABASE_URL
+hv API_KEY_PROD DATABASE_URL -- node server.js
+hv AWS_ACCESS_KEY AWS_SECRET_KEY -- terraform apply
+hv DATABASE_URL -- psql $DATABASE_URL
 
 # Multiple flags/args after --
-secretcli API_KEY -- curl -H "Authorization: Bearer $API_KEY" https://api.example.com/data
+hv API_KEY -- curl -H "Authorization: Bearer $API_KEY" https://api.example.com/data
 
 # Complex commands
-secretcli STRIPE_KEY GITHUB_TOKEN -- bash -c 'echo "Stripe: $STRIPE_KEY" && git push'
+hv STRIPE_KEY GITHUB_TOKEN -- bash -c 'echo "Stripe: $STRIPE_KEY" && git push'
 ```
 
 #### 6.1.3 Inspection Mode (no `--`)
@@ -530,43 +553,43 @@ If no `--` is given, the CLI only **requests** the env vars if they exist in the
 
 ```bash
 # Just request and output env vars (if allowed and set)
-secretcli API_KEY_PROD DATABASE_URL
+hv API_KEY_PROD DATABASE_URL
 
 # With socket path
-secretcli --socket /custom/path.sock API_KEY_PROD
+hv --socket /custom/path.sock API_KEY_PROD
 
 # Output formats (only meaningful without --)
-secretcli --format env API_KEY_PROD DATABASE_URL
+hv --format env API_KEY_PROD DATABASE_URL
 # Output: export API_KEY_PROD="value1"
 #         export DATABASE_URL="value2"
 
-secretcli --format json API_KEY_PROD
+hv --format json API_KEY_PROD
 # Output: {"API_KEY_PROD": "value1"}
 
-secretcli --format plain API_KEY_PROD
+hv --format plain API_KEY_PROD
 # Output: value1 (first secret only)
 
 # Check server status (health check only)
-secretcli --status
+hv --status
 # Output: Server is running (version 1.0.0)
 # Or: Error: Server not responding (timeout 500ms)
 
 # Show version
-secretcli --version
+hv --version
 ```
 
 #### 6.1.4 CLI Options and Arguments
 
 **Usage:**
 ```
-secretcli [OPTIONS] ENV1 [ENV2 ENV3 ...] [-- COMMAND [ARGS...]]
+hv [OPTIONS] ENV1 [ENV2 ENV3 ...] [-- COMMAND [ARGS...]]
 ```
 
 **Options:**
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `--socket <PATH>` | Path to the Unix domain socket file | `/tmp/secretserv.sock` |
+| `--socket <PATH>` | Path to the Unix domain socket file | `/tmp/hostvault.sock` |
 | `--format <FORMAT>` | Output format: `export`, `env`, `json`, `plain` | `export` |
 | `--status` | Check server health and exit | - |
 | `--version` | Show version information and exit | - |
@@ -577,35 +600,35 @@ secretcli [OPTIONS] ENV1 [ENV2 ENV3 ...] [-- COMMAND [ARGS...]]
 The socket path is resolved in the following priority order:
 1. `--socket` CLI flag (highest priority)
 2. `SECRETCLI_SOCKET` environment variable
-3. `socket_path` in config file (`~/.config/secretcli/config.yaml`)
-4. Default: `/tmp/secretserv.sock`
+3. `socket_path` in config file (`~/.config/hv/config.yaml`)
+4. Default: `/tmp/hostvault.sock`
 
 **Examples:**
 
 ```bash
 # Use custom socket path
-secretcli --socket /var/run/secretserv.sock API_KEY_PROD -- node app.js
+hv --socket /var/run/hv.sock API_KEY_PROD -- node app.js
 
 # Socket path via environment variable
 export SECRETCLI_SOCKET=/custom/path.sock
-secretcli API_KEY_PROD DATABASE_URL
+hv API_KEY_PROD DATABASE_URL
 
 # Check server status with custom socket
-secretcli --socket /tmp/custom.sock --status
+hv --socket /tmp/custom.sock --status
 ```
 
 #### 6.1.5 Shell Integration
 ```bash
 # Source the exports into current shell (inspection mode)
-eval $(secretcli --format export API_KEY_PROD DATABASE_URL)
+eval $(hv --format export API_KEY_PROD DATABASE_URL)
 # Output suitable for eval: export API_KEY_PROD="value1"; export DATABASE_URL="value2"
 
 # Use in subshell
-(secretcli API_KEY -- ./script.sh)
+(hv API_KEY -- ./script.sh)
 # Env vars only available within the subshell
 
 # Chain multiple secrets
-secretcli SECRET1 -- secretcli SECRET2 -- ./app
+hv SECRET1 -- hv SECRET2 -- ./app
 # Each requires separate biometric approval (by design)
 ```
 
@@ -647,7 +670,7 @@ The CLI distinguishes between **inspection mode** and **execution mode** based o
 
 **Execution Mode (with `--`)**:
 ```
-secretcli [OPTIONS] ENV1 [ENV2 ENV3 ...] -- COMMAND [ARGS...]
+hv [OPTIONS] ENV1 [ENV2 ENV3 ...] -- COMMAND [ARGS...]
                                                       ^^^^ everything after -- is the command
 ```
 
@@ -659,7 +682,7 @@ secretcli [OPTIONS] ENV1 [ENV2 ENV3 ...] -- COMMAND [ARGS...]
 
 **Inspection Mode (no `--`)**:
 ```
-secretcli [OPTIONS] ENV1 [ENV2 ENV3 ...]
+hv [OPTIONS] ENV1 [ENV2 ENV3 ...]
 ```
 
 - All positional arguments are env var names
@@ -672,40 +695,40 @@ secretcli [OPTIONS] ENV1 [ENV2 ENV3 ...]
 **Execution Mode**:
 ```bash
 # Simple command
-secretcli API_KEY -- node app.js
+hv API_KEY -- node app.js
 # Executes: API_KEY=<secret> node app.js
 
 # Command with arguments
-secretcli AWS_KEY AWS_SECRET -- aws s3 ls s3://bucket
+hv AWS_KEY AWS_SECRET -- aws s3 ls s3://bucket
 # Executes: AWS_KEY=<k> AWS_SECRET=<s> aws s3 ls s3://bucket
 
 # Multiple env vars, complex command
-secretcli TOKEN API_URL -- curl -H "Authorization: Bearer $TOKEN" "$API_URL/data"
+hv TOKEN API_URL -- curl -H "Authorization: Bearer $TOKEN" "$API_URL/data"
 # Note: Shell expands $TOKEN and $API_URL from the retrieved values
 
 # Script with args
-secretcli DB_URL -- ./script.sh --production --verbose
+hv DB_URL -- ./script.sh --production --verbose
 # All args after -- passed to the script
 ```
 
 **Inspection Mode**:
 ```bash
 # Output for eval
-secretcli --format export API_KEY
+hv --format export API_KEY
 # Output: export API_KEY="secret123"
-# Can be used: eval $(secretcli --format export API_KEY)
+# Can be used: eval $(hv --format export API_KEY)
 
 # JSON output
-secretcli --format json API_KEY SECRET
+hv --format json API_KEY SECRET
 # Output: {"API_KEY": "val1", "SECRET": "val2"}
 ```
 
 ### 6.4 Configuration
 
-**Config File**: `~/.config/secretcli/config.yaml`
+**Config File**: `~/.config/hv/config.yaml`
 
 ```yaml
-socket_path: /tmp/secretserv.sock
+socket_path: /tmp/hostvault.sock
 default_format: export  # export, json, plain
 timeout: 30
 retry:
@@ -720,89 +743,89 @@ retry:
 **Health Check Failures (short-circuit, no auth attempted)**:
 ```bash
 # Server not running - health check timeout
-$ secretcli API_KEY -- ./deploy.sh
+$ hv API_KEY -- ./deploy.sh
 Error: Server health check failed: Connection timeout (500ms)
-         The Secret Server is not responding.
-         Is the Secret Server running on the macOS host?
+         The HostVault is not responding.
+         Is the HostVault running on the macOS host?
          Hint: Check the menu bar app is running and the socket exists.
 (Exit code 1)
 
 # Server running but slow/unresponsive
-$ secretcli API_KEY -- ./deploy.sh
+$ hv API_KEY -- ./deploy.sh
 Error: Server health check failed: Response timeout after 500ms
-         The Secret Server is running but not responding to health checks.
-         Try restarting the Secret Server application.
+         The HostVault is running but not responding to health checks.
+         Try restarting the HostVault application.
 (Exit code 1)
 
 # Socket not found
-$ secretcli API_KEY -- ./deploy.sh
-Error: Server health check failed: Socket not found at /tmp/secretserv.sock
-         Is the Secret Server running?
-         Hint: Start the Secret Server from the macOS menu bar.
+$ hv API_KEY -- ./deploy.sh
+Error: Server health check failed: Socket not found at /tmp/hostvault.sock
+         Is the HostVault running?
+         Hint: Start the HostVault from the macOS menu bar.
 (Exit code 1)
 ```
 
 **Inspection Mode (no `--`)**:
 ```bash
-$ secretcli NON_EXISTENT_SECRET
+$ hv NON_EXISTENT_SECRET
 Error: Secret not found: NON_EXISTENT_SECRET
          This env var is not in the server's allowlist or has no value set.
 (Exit code 4)
 
-$ secretcli API_KEY_PROD
+$ hv API_KEY_PROD
 Error: Authorization denied by user
          User declined the authorization request or cancelled biometric prompt.
 (Exit code 2)
 
-$ secretcli UNAUTHORIZED_SECRET
+$ hv UNAUTHORIZED_SECRET
 Error: Not in allowlist: UNAUTHORIZED_SECRET
          This env var name is not in the server's configured allowlist.
-         Use the Secret Server GUI to add it to the allowlist first.
+         Use the HostVault GUI to add it to the allowlist first.
 (Exit code 8)
 
-$ secretcli API_KEY_PROD
+$ hv API_KEY_PROD
 Error: Biometric authentication failed
          Touch ID/Face ID verification failed or was cancelled.
 (Exit code 9)
 
-$ secretcli API_KEY_PROD
-Error: Connection failed: /tmp/secretserv.sock not found
-Hint: Is the Secret Server running on the macOS host?
+$ hv API_KEY_PROD
+Error: Connection failed: /tmp/hostvault.sock not found
+Hint: Is the HostVault running on the macOS host?
 (Exit code 1)
 ```
 
 **Execution Mode (with `--`)**:
 ```bash
 # Successful execution
-$ secretcli API_KEY -- ./my-script.sh
+$ hv API_KEY -- ./my-script.sh
 Running with API_KEY=***... (hidden)
 Script output here
 (Exit code: whatever my-script.sh returned)
 
 # Command not found
-$ secretcli API_KEY -- nonexistent-cmd
+$ hv API_KEY -- nonexistent-cmd
 Error: Command not found: nonexistent-cmd
          Ensure the command exists and is executable.
 (Exit code 10)
 
 # Auth denied (command never runs) - health check passed but auth failed
-$ secretcli API_KEY -- ./deploy.sh
+$ hv API_KEY -- ./deploy.sh
 Error: Authorization denied by user
          Biometric prompt failed or was cancelled.
          Command './deploy.sh' was NOT executed.
 (Exit code 2)
 
 # Allowlist violation (command never runs) - health check passed but env var not in list
-$ secretcli UNAUTHORIZED_VAR -- ./run.sh
+$ hv UNAUTHORIZED_VAR -- ./run.sh
 Error: Not in allowlist: UNAUTHORIZED_VAR
          This env var name is not in the server's configured allowlist.
          Command './run.sh' was NOT executed.
 (Exit code 8)
 
 # Server stopped between health check and full request (very rare)
-$ secretcli API_KEY -- ./deploy.sh
+$ hv API_KEY -- ./deploy.sh
 Error: Server disconnected during request
-         The Secret Server stopped responding after health check.
+         The HostVault stopped responding after health check.
          Command './deploy.sh' was NOT executed.
 (Exit code 1)
 ```
@@ -912,7 +935,7 @@ Error: Server disconnected during request
 - [ ] Server: Secret management GUI
 - [ ] Server: Whitelist/remember decisions
 - [ ] Server: Settings/preferences window
-- [ ] Server: Log viewer
+- [ ] Server: Log viewer with purge functionality (date range purge, export before purge)
 - [ ] Client: Multiple output formats
 - [ ] Client: Shell integration helpers
 - [ ] Client: Status/check command
@@ -1065,7 +1088,7 @@ Examples of valid allowlist names: `API_KEY`, `DATABASE_URL_PROD`, `AWS_SECRET_A
 
 ### 11.2 Allowlist Configuration Format
 
-The server stores the allowlist configuration in `~/Library/Application Support/SecretServer/allowlist.json`:
+The server stores the allowlist configuration in `~/Library/Application Support/HostVault/allowlist.json`:
 
 ```json
 {
@@ -1116,7 +1139,7 @@ Resolution order:
 1. `--socket` CLI flag (highest priority)
 2. `SECRETCLI_SOCKET` environment variable
 3. `socket_path` in config file
-4. Default: `/tmp/secretserv.sock`
+4. Default: `/tmp/hostvault.sock`
 
 ### 11.5 Glossary
 
