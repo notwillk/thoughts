@@ -16,6 +16,9 @@
     "OPENCODE_CONFIG": "${containerWorkspaceFolder}/.opencode/config.json",
     "REPO_PATH": "${containerWorkspaceFolder}"
   },
+  "remoteEnv": {
+    "PATH": "${containerWorkspaceFolder}/bin:${env:PATH}"
+  },
   "customizations": {
     "vscode": {
       "extensions": [

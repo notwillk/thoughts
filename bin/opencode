@@ -1,0 +1,3 @@
+#!/bin/bash
+echo "Running opencode wrapper script..."
+exec /usr/local/bin/opencode "$@"
