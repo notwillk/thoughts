@@ -41,6 +41,7 @@ This design ensures that even if a client is compromised, only pre-approved env 
 - [ ] Secrets are encrypted at rest in macOS Keychain
 - [ ] Server GUI collects access logs including successful requests, failed attempts, and authentication failures
 - [ ] Server GUI provides ability to view and purge access logs with date range filtering
+- [ ] Server GUI displays the command to be executed in authorization dialog and logs it
 
 ---
 
@@ -63,7 +64,7 @@ graph TB
         AuthEngine --> Allowlist
         AuthEngine --> SecretStore["Secret Store<br/>(Keychain)"]
 
-        Socket["Unix Domain Socket<br/>(/tmp/hostvault.sock)"]
+        Socket["Unix Domain Socket<br/>(~/Library/Application Support/HostVault/hostvault.sock)"]
     end
 
     SSH["SSH / Local mount"] --> Socket
@@ -106,7 +107,7 @@ graph TB
 #### 3.2.1 Server (macOS)
 - **Platform**: macOS 10.15+ (Catalina and later) for Touch ID support
 - **Language**: Swift with SwiftUI for GUI
-- **Socket Path**: `/tmp/hostvault.sock` (configurable)
+- **Socket Path**: `~/Library/Application Support/HostVault/hostvault.sock` (configurable)
 - **Allowlist Storage**: JSON file (`~/Library/Application Support/HostVault/`)
 - **Secret Storage**: macOS Keychain for secret values (keyed by env var name)
 - **Biometric Auth**: LocalAuthentication framework (Touch ID / Face ID / Passcode)
@@ -184,9 +185,12 @@ Before making a full secret request, the client **MUST** send a lightweight heal
     "pid": 12345,
     "cwd": "/current/working/dir"
   },
-  "secrets": ["SECRET_NAME_1", "SECRET_NAME_2", "API_KEY_PROD"]
+  "secrets": ["SECRET_NAME_1", "SECRET_NAME_2", "API_KEY_PROD"],
+  "command": "node server.js"
 }
 ```
+
+**Note**: The `command` field contains the full command string that will be executed with the requested secrets. This is included in the request so the user can review what will run before approving. If in inspection mode (no `--` separator), this field will be `null` or omitted.
 
 #### 4.2.2 Server → Client
 
@@ -241,7 +245,7 @@ sequenceDiagram
     participant Allowlist as Allowlist
     participant Keychain as Keychain
 
-    Client->>Server: 1. Connect to /tmp/hostvault.sock
+    Client->>Server: 1. Connect to ~/Library/Application Support/HostVault/hostvault.sock
     Client->>Server: 2. Send HEALTH CHECK (type: "health")
     Server-->>Client: 3. HEALTH OK response (< 500ms)
 
@@ -250,7 +254,7 @@ sequenceDiagram
         Note over Client: EXIT IMMEDIATELY (code 1)
     end
 
-    Client->>Server: 4. Send FULL REQUEST with env var names
+    Client->>Server: 4. Send FULL REQUEST with env var names and command
 
     Server->>Allowlist: 5. Validate all names against allowlist
     Allowlist-->>Server: Membership check result
@@ -266,7 +270,7 @@ sequenceDiagram
         alt Biometric FAILED
             Server-->>Client: 7a. Deny immediately (biometric_failed)
         else Biometric SUCCESS
-            Server->>User: 7b. Show authorization dialog
+            Server->>User: 7b. Show authorization dialog (with command to execute)
             User-->>Server: 8. Approve/Deny within timeout (30s)
 
             alt Approved
@@ -331,13 +335,12 @@ All authorization decisions MUST be authenticated via Touch ID, Face ID, or devi
 - Modal window showing:
   - 🔒 "Authenticated via Touch ID" badge
   - Client hostname, user, PID, and CWD
+  - **Command to be executed** (if in execution mode with `--` separator)
   - List of requested env var names (from allowlist)
   - Warning if any non-allowlist secrets were requested (already filtered out)
-  - "Approve Once" button (requires biometric re-auth on next request)
-  - "Approve Always for this Client" button (stores client in biometric-bypass whitelist for 1 hour)
+  - "Approve" button (requires biometric re-auth on next request)
   - "Deny" button
   - 30-second timeout with countdown timer
-  - Checkbox for "Remember this decision (still requires biometric auth)"
 
 #### 5.1.3 Health Check Endpoint
 
@@ -346,7 +349,7 @@ The server exposes a simple health check endpoint for client pre-flight checks:
 **Endpoint**: Same socket, message type `"health"`
 **Response Time**: Must respond within 100ms
 **Authentication**: None required
-**Logging**: No audit log entry (reduces noise)
+**Logging**: Audit log entry marked as healthcheck
 **Rate Limiting**: 10 requests/second per connection
 
 **Purpose**: Allow CLI to quickly determine if server is available before attempting full auth flow. This prevents user confusion (waiting for Touch ID when server is down).
@@ -371,7 +374,7 @@ The server GUI must provide comprehensive access log collection and management:
 
 **Log Collection Requirements**:
 - Collect all access attempts including successful and **failed attempts**
-- Log entries must include: timestamp, client hostname, client user, PID, requested env vars, decision (approved/denied), reason for denial, and biometric auth status
+- Log entries must include: timestamp, client hostname, client user, PID, requested env vars, **command to be executed** (if any), decision (approved/denied), reason for denial, and biometric auth status
 - Failed authentication attempts (biometric failure, timeout, allowlist violations) must be explicitly logged
 - Logs stored locally in JSON Lines format with rotation support
 
@@ -384,27 +387,18 @@ The server GUI must provide comprehensive access log collection and management:
 #### 5.2.2 Secret Configuration Panel (Allowlist Management)
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│ HostVault - Configure Env Vars                                 [+] [-]  │
+│ HostVault - Configure Env Vars                                        [+]   │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
-│  ┌─ Allowlist Configuration ──────────────────────────────────────────┐    │
-│  │                                                                     │    │
-│  │  Only env var names listed below can be requested by clients.       │    │
-│  │  All other requests will be automatically blocked.                 │    │
-│  │                                                                     │    │
-│  │  [🔍 Import from Environment...]  [📁 Import from File...]         │    │
-│  │                                                                     │    │
-│  └─────────────────────────────────────────────────────────────────────┘    │
-│                                                                             │
-│  ┌─ Allowed Env Var Names ──────────────────────────────────────────────┐   │
-│  │                                                                       │   │
-│  │ Env Var Name        │ Secret Set │ Last Access │ Actions              │   │
-│  ├───────────────────────────────────────────────────────────────────────┤   │
-│  │ API_KEY_PROD        │ ✅ Yes     │ 2 hours ago │ [👁 View] [🗑 Del]   │   │
-│  │ DATABASE_URL        │ ✅ Yes     │ 1 day ago   │ [👁 View] [🗑 Del]   │   │
-│  │ GITHUB_TOKEN        │ ⚠️ Empty   │ Never       │ [✏ Set] [🗑 Del]    │   │
-│  │ AWS_ACCESS_KEY      │ ✅ Yes     │ 3 days ago  │ [👁 View] [🗑 Del]   │   │
-│  │ STRIPE_SECRET_KEY   │ ✅ Yes     │ Never       │ [👁 View] [🗑 Del]   │   │
+│  ┌─ Allowed Env Var Names ──────────────────────────────────────┐   │
+│  │                                                              │   │
+│  │ Env Var Name        │ Last Access │ Actions              │   │
+│  ├──────────────────────────────────────────────────────────────┤   │
+│  │ API_KEY_PROD        │ 2 hours ago │ [✏ Set] [🗑 Del]   │   │
+│  │ DATABASE_URL        │ 1 day ago   │ [✏ Set] [🗑 Del]   │   │
+│  │ GITHUB_TOKEN        │ Never       │ [✏ Set] [🗑 Del]    │   │
+│  │ AWS_ACCESS_KEY      │ 3 days ago  │ [✏ Set] [🗑 Del]   │   │
+│  │ STRIPE_SECRET_KEY   │ Never       │ [✏ Set] [🗑 Del]   │   │
 │  │                                                                     │   │
 │  └───────────────────────────────────────────────────────────────────────┘   │
 │                                                                             │
@@ -442,12 +436,17 @@ The server GUI must provide comprehensive access log collection and management:
 │ ✅ Authenticated via Touch ID    Secret Access    00:27    │
 ├────────────────────────────────────────────────────────────┤
 │                                                            │
-│  A client is requesting access to the following env vars:    │
+│  A client is requesting access to the following env vars:  │
 │                                                            │
 │  ┌─────────────────────────────────────────────────────┐   │
-│  │ ✅ API_KEY_PROD      (allowed - in allowlist)      │   │
-│  │ ✅ DATABASE_URL      (allowed - in allowlist)      │   │
-│  │ ❌ UNAUTHORIZED_VAR  (BLOCKED - not in allowlist) │   │
+│  │ ✅ API_KEY_PROD      (allowed - in allowlist)       │   │
+│  │ ✅ DATABASE_URL      (allowed - in allowlist)       │   │
+│  │ ❌ UNAUTHORIZED_VAR  (BLOCKED - not in allowlist)   │   │
+│  └─────────────────────────────────────────────────────┘   │
+│                                                            │
+│  Command to Execute:                                       │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │ $ node server.js                                    │   │
 │  └─────────────────────────────────────────────────────┘   │
 │                                                            │
 │  Client Details:                                           │
@@ -456,11 +455,11 @@ The server GUI must provide comprehensive access log collection and management:
 │    PID:  48291                                             │
 │    CWD:  /opt/app/deployment                               │
 │                                                            │
-│  [  ] Remember this client (still requires biometric)   │
+│  [  ] Remember this client (still requires biometric)      │
 │                                                            │
-│      [  👍  Approve  ]  [  👎  Deny  ]                   │
+│      [  👍  Approve  ]  [  👎  Deny  ]                     │
 │                                                            │
-│  Note: Approval valid for this request only.              │
+│  Note: Approval valid for this request only.             │
 │        Biometric auth required for all secret requests.     │
 └────────────────────────────────────────────────────────────┘
 ```
@@ -468,7 +467,7 @@ The server GUI must provide comprehensive access log collection and management:
 ### 5.3 Configuration
 
 **Settings Window**:
-- **Socket Path**: Default `/tmp/hostvault.sock`
+- **Socket Path**: Default `~/Library/Application Support/HostVault/hostvault.sock`
 - **Authorization Timeout**: Default 30 seconds
 - **Auto-Start**: Launch at login option
 - **Logging Level**: Debug/Info/Warning/Error
@@ -489,11 +488,14 @@ The server GUI must provide comprehensive access log collection and management:
     "pid": 48291
   },
   "secrets_requested": ["API_KEY_PROD", "DATABASE_URL"],
+  "command": "node server.js",
   "decision": "approved",
   "decision_by": "user",
   "duration_ms": 3200
 }
 ```
+
+**Note**: The `command` field contains the full command string that would be executed (if in execution mode), or `null` if in inspection mode.
 
 **Log Events**:
 - `server_start` / `server_stop`
@@ -516,7 +518,7 @@ The server GUI must provide comprehensive access log collection and management:
 
 Before any secret request, the CLI **MUST** perform a health check to verify server availability:
 
-1. **Connect to socket** (`/tmp/hostvault.sock`)
+1. **Connect to socket** (`~/Library/Application Support/HostVault/hostvault.sock`)
 2. **Send health check request** (type: "health")
 3. **Wait for health OK response** (timeout: 500ms)
    - **If healthy**: Continue with full secret request + auth flow
@@ -589,7 +591,7 @@ hv [OPTIONS] ENV1 [ENV2 ENV3 ...] [-- COMMAND [ARGS...]]
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `--socket <PATH>` | Path to the Unix domain socket file | `/tmp/hostvault.sock` |
+| `--socket <PATH>` | Path to the Unix domain socket file | `~/Library/Application Support/HostVault/hostvault.sock` |
 | `--format <FORMAT>` | Output format: `export`, `env`, `json`, `plain` | `export` |
 | `--status` | Check server health and exit | - |
 | `--version` | Show version information and exit | - |
@@ -599,9 +601,9 @@ hv [OPTIONS] ENV1 [ENV2 ENV3 ...] [-- COMMAND [ARGS...]]
 
 The socket path is resolved in the following priority order:
 1. `--socket` CLI flag (highest priority)
-2. `SECRETCLI_SOCKET` environment variable
+2. `HV_SOCKET` environment variable
 3. `socket_path` in config file (`~/.config/hv/config.yaml`)
-4. Default: `/tmp/hostvault.sock`
+4. Default: `~/Library/Application Support/HostVault/hostvault.sock`
 
 **Examples:**
 
@@ -610,7 +612,7 @@ The socket path is resolved in the following priority order:
 hv --socket /var/run/hv.sock API_KEY_PROD -- node app.js
 
 # Socket path via environment variable
-export SECRETCLI_SOCKET=/custom/path.sock
+export HV_SOCKET=/custom/path.sock
 hv API_KEY_PROD DATABASE_URL
 
 # Check server status with custom socket
@@ -728,7 +730,7 @@ hv --format json API_KEY SECRET
 **Config File**: `~/.config/hv/config.yaml`
 
 ```yaml
-socket_path: /tmp/hostvault.sock
+socket_path: ~/Library/Application Support/HostVault/hostvault.sock
 default_format: export  # export, json, plain
 timeout: 30
 retry:
@@ -759,7 +761,7 @@ Error: Server health check failed: Response timeout after 500ms
 
 # Socket not found
 $ hv API_KEY -- ./deploy.sh
-Error: Server health check failed: Socket not found at /tmp/hostvault.sock
+Error: Server health check failed: Socket not found at ~/Library/Application Support/HostVault/hostvault.sock
          Is the HostVault running?
          Hint: Start the HostVault from the macOS menu bar.
 (Exit code 1)
@@ -789,7 +791,7 @@ Error: Biometric authentication failed
 (Exit code 9)
 
 $ hv API_KEY_PROD
-Error: Connection failed: /tmp/hostvault.sock not found
+Error: Connection failed: ~/Library/Application Support/HostVault/hostvault.sock not found
 Hint: Is the HostVault running on the macOS host?
 (Exit code 1)
 ```
@@ -1137,9 +1139,9 @@ Secret **values** are stored separately in macOS Keychain, keyed by env var name
 
 Resolution order:
 1. `--socket` CLI flag (highest priority)
-2. `SECRETCLI_SOCKET` environment variable
+2. `HV_SOCKET` environment variable
 3. `socket_path` in config file
-4. Default: `/tmp/hostvault.sock`
+4. Default: `~/Library/Application Support/HostVault/hostvault.sock`
 
 ### 11.5 Glossary
 
@@ -1156,6 +1158,7 @@ Resolution order:
 - **LocalAuthentication**: macOS framework for biometric authentication (Touch ID / Face ID / Passcode)
 - **Execution Mode**: CLI mode where env vars are requested and then a command is executed with those vars set (uses `--` separator)
 - **Inspection Mode**: CLI mode where env vars are requested and output but no command is executed (no `--` separator)
+- **Command**: The full command string that the client intends to execute with the requested secrets (displayed in auth dialog and logged)
 - **Command Separator**: The `--` delimiter that separates env var names from the command to execute
 - **Short-Circuit**: When CLI detects server is unavailable and exits immediately without attempting full auth flow
 
