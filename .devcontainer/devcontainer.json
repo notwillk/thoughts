@@ -13,6 +13,7 @@
   "containerEnv": {
     "DEVCONTAINER": "true",
     "FIREWORKS_API_KEY": "${localEnv:FIREWORKS_API_KEY}",
+    "MOONSHOT_API_KEY": "${localEnv:MOONSHOT_API_KEY}",
     "OPENCODE_CONFIG": "${containerWorkspaceFolder}/.opencode/config.json",
     "REPO_PATH": "${containerWorkspaceFolder}"
   },
