@@ -5,7 +5,7 @@
 **Unless explicitly stated otherwise, all user requests refer to the PRD (Product Requirements Document).**
 
 When the user makes a request:
-- **Assume they are talking about the PRD** in `prds/hostvault/PRD.md`
+- **Assume they are talking about the PRD** in `prds/hostvault/README.md`
 - **Implement the description** - actually modify the PRD to reflect the changes they describe
 - Do not just discuss or analyze - make the actual changes to the document
 
