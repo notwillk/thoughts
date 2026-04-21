@@ -12,6 +12,7 @@
 - [Health Endpoint Tests](#health-endpoint-tests)
 - [Command Display Tests](#command-display-tests)
 - [Log Security Tests](#log-security-tests)
+- [Bootstrap Proxy Security Tests](#bootstrap-proxy-security-tests)
 - [Integration Test Scenarios](#integration-test-scenarios)
 - [Manual Test Checklist](#manual-test-checklist)
 
@@ -110,6 +111,29 @@
 | LOG-006 | Export before purge | Purge with export option | JSON export created before purge |
 | LOG-007 | Command in log | Approve request with command | Command field present in log entry |
 
+## Bootstrap Proxy Security Tests
+
+| ID | Test Case | Steps | Expected Result |
+|----|-----------|-------|-----------------|
+| BPS-001 | Binary busybox pattern | Run `ln -s hv hv-proxy && ./hv-proxy --version` | Shows proxy version, not client |
+| BPS-002 | External socket exclusive bind | Start proxy, try second instance on same socket | Second instance fails with "address already in use" |
+| BPS-003 | External socket default permissions | Check `/run/hostvault/` and `external.sock` after startup | Directory 0700, socket 0600 |
+| BPS-004 | External socket configurable | Start with `--external-socket /tmp/test.sock` | Creates socket at specified path with correct permissions |
+| BPS-005 | Internal IPC no filesystem presence | List `/proc/self/fd` of client process | Shows socket FD, no path in filesystem |
+| BPS-006 | Rogue process external connect | Process tries to connect to external.sock directly | Connection refused or permission denied |
+| BPS-007 | Proxy startup wins race | Start proxy and rogue simultaneously | Proxy obtains exclusive bind, rogue fails |
+| BPS-008 | FD passing to client | Proxy spawns client or passes FD via SCM_RIGHTS | Client has valid socket FD for internal IPC |
+| BPS-009 | Client context preserved | Request from container client | Host server sees original client hostname, PID, CWD |
+| BPS-010 | Proxy health check aggregation | Stop host server, query via container client | Proxy detects host failure, returns exit code 1 to client |
+| BPS-011 | Upstream connection retry | Start proxy without host server available | Proxy retries connection with exponential backoff |
+| BPS-012 | Container mode auto-detection | Run client in container with proxy running | Client auto-detects container mode, uses internal IPC |
+| BPS-013 | Exit code 12 - proxy not running | Stop proxy, run client | Client exits with code 12 |
+| BPS-014 | Exit code 13 - internal IPC error | Simulate socketpair failure | Client exits with code 13 |
+| BPS-015 | Exit code 14 - socket security violation | Modify external socket permissions to 0777 | Client exits with code 14 |
+| BPS-016 | Proxy forwards with proxied_by field | Send request through proxy | Request includes `client_info.proxied_by` field |
+| BPS-017 | External socket environment override | Set `HV_EXTERNAL_SOCKET=/custom/path.sock`, start proxy | Proxy uses custom path |
+| BPS-018 | Upstream socket environment override | Set `HV_UPSTREAM_SOCKET=/custom/host.sock`, start proxy | Proxy connects to custom upstream path |
+
 ## Integration Test Scenarios
 
 ### End-to-End: Successful Execution
@@ -169,6 +193,45 @@
 6. **Verify**: Deny prevents destructive operation
 7. **Verify**: Log shows command for audit trail
 
+### End-to-End: Container Mode Execution
+
+1. Start host server on macOS
+2. Configure SSH forwarding for `~/Library/Application Support/HostVault/hostvault.sock`
+3. In devcontainer: Create `hv-proxy` symlink and start proxy
+4. **Verify**: Proxy binds external socket at `/run/hostvault/external.sock` (0700/0600)
+5. **Verify**: Proxy connects upstream successfully
+6. Run: `hv API_KEY -- node app.js` in container
+7. **Verify**: Health check passes through proxy (< 500ms)
+8. **Verify**: Biometric prompt appears on macOS host (not in container)
+9. **Verify**: Auth dialog shows original container client details (hostname, PID, CWD)
+10. **Verify**: Approve, secrets received in container
+11. **Verify**: Node executes with `API_KEY` set
+12. **Verify**: Exit code 0
+13. **Verify**: Audit log shows `proxied_by` field
+
+### End-to-End: Bootstrap Proxy Failure
+
+1. Start host server on macOS
+2. Configure SSH forwarding
+3. In devcontainer: Do NOT start proxy
+4. Run: `hv API_KEY -- ./script.sh` in container
+5. **Verify**: Exit code 12 (bootstrap proxy not running)
+6. **Verify**: Error message mentions bootstrap proxy and external socket
+7. **Verify**: Command NOT executed
+8. **Verify**: No connection attempt to host server
+
+### End-to-End: Rogue Process Isolation
+
+1. Start host server on macOS
+2. Configure SSH forwarding
+3. In devcontainer: Start proxy
+4. **Verify**: External socket has correct permissions (0700/0600)
+5. Start rogue process attempting to connect to external.sock directly
+6. **Verify**: Rogue connection fails (permission denied or connection refused)
+7. Run legitimate client via internal IPC
+8. **Verify**: Legitimate client succeeds, gets secrets after auth
+9. **Verify**: Request goes through proxy, host sees original client context
+
 ## Manual Test Checklist
 
 ### GUI Usability
@@ -212,6 +275,25 @@
 - [ ] Touch ID works on supported hardware
 - [ ] Face ID works on supported Macs
 - [ ] Passcode fallback works on all systems
+
+### Bootstrap Proxy (Container Mode)
+
+- [ ] `hv-proxy --version` works via symlink (busybox pattern)
+- [ ] Proxy starts and binds external socket exclusively
+- [ ] External socket has correct permissions (0700/0600)
+- [ ] External socket path is configurable via `--external-socket`
+- [ ] Upstream socket path is configurable via `--upstream-socket`
+- [ ] Internal IPC uses socketpair (no filesystem path)
+- [ ] Client auto-detects container mode
+- [ ] Client connects via internal IPC (inherited FD)
+- [ ] Client context (hostname, PID, CWD) preserved through proxy
+- [ ] Host server sees `proxied_by` field in request
+- [ ] Proxy health check aggregates upstream status
+- [ ] Proxy handles upstream disconnection gracefully (retry with backoff)
+- [ ] Rogue process cannot connect to external socket directly
+- [ ] Exit code 12 when proxy not running
+- [ ] Exit code 13 on internal IPC failure
+- [ ] Exit code 14 on socket security violation
 
 ### Complex Command Scenarios
 

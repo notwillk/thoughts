@@ -11,6 +11,7 @@
 - [Exit Codes](#exit-codes)
 - [Execution Model & Argument Parsing](#execution-model--argument-parsing)
 - [Configuration](#configuration)
+- [Container/Bootstrap Proxy Mode](#containerbootstrap-proxy-mode)
 - [Error Handling](#error-handling)
 - [Shell Integration](#shell-integration)
 
@@ -122,6 +123,9 @@ hv --socket /tmp/custom.sock --status
 | `9` | Biometric Failed | Biometric authentication failed or was cancelled |
 | `10` | Command Not Found | The command after `--` was not found or not executable |
 | `11` | Command Failed | Command executed but returned non-zero exit code |
+| `12` | Bootstrap Proxy Not Running | Container server not available at external socket |
+| `13` | Internal IPC Error | Communication failure between proxy and client via socketpair |
+| `14` | Socket Security Violation | External socket permission/ownership check failed |
 
 ### Health Check Short-Circuit
 
@@ -190,6 +194,70 @@ retry:
   delay: 1
 ```
 
+## Container/Bootstrap Proxy Mode
+
+When running inside a devcontainer, HostVault uses a **bootstrap proxy** to create hardened socket boundaries between the host server and container clients.
+
+### Binary Entry Points (Busybox Pattern)
+
+The `hv` binary uses `argv[0]` inspection to determine operating mode:
+
+| argv[0] | Mode | Description |
+|---------|------|-------------|
+| `hv` | Client mode | Normal CLI client (direct or container) |
+| `hv-proxy` | Bootstrap proxy | Container server mode (manages socket boundaries) |
+
+**Usage in Container**:
+```bash
+# Create symlink for proxy mode
+ln -s hv hv-proxy
+
+# In Dockerfile/init - start bootstrap proxy
+./hv-proxy --external-socket /run/hostvault/external.sock
+
+# Client automatically detects container mode
+./hv API_KEY -- node server.js
+```
+
+### Bootstrap Proxy Options
+
+```
+hv-proxy [OPTIONS]
+
+Options:
+  --external-socket <PATH>    External socket path (default: /run/hostvault/external.sock)
+  --upstream-socket <PATH>    Host server socket (default: ~/Library/Application Support/HostVault/hostvault.sock)
+  --foreground                Run in foreground (don't daemonize)
+  --version                   Show version
+  -h, --help                  Show help message
+```
+
+**Environment Variables**:
+- `HV_EXTERNAL_SOCKET`: Override external socket path
+- `HV_UPSTREAM_SOCKET`: Override upstream host server socket
+
+### Container Mode Socket Resolution
+
+In container mode, the client connects via internal IPC (not filesystem sockets):
+
+1. **Inherited FD**: Socketpair FD passed from proxy parent (standard inherited FD)
+2. `HV_INTERNAL_FD`: Environment variable specifying FD number
+3. Fallback: Direct external socket connection (emergency only, not recommended)
+
+### Container Detection
+
+The client automatically detects container mode:
+- Presence of `HV_PROXY` environment variable
+- Availability of inherited socketpair FD
+- Existence of external socket at default path (as fallback)
+
+### Security Notes
+
+- External socket has strict permissions: directory `0700`, socket `0600`
+- Internal IPC uses `socketpair()` with no filesystem presence
+- Clients cannot connect directly to external socket (enforced by permissions)
+- All container communication flows through the bootstrap proxy
+
 ## Error Handling
 
 ### Health Check Failures (short-circuit, no auth attempted)
@@ -253,6 +321,27 @@ Error: Server disconnected during request
          The HostVault stopped responding after health check.
          Command './deploy.sh' was NOT executed.
 (Exit code 1)
+
+# Bootstrap proxy not running (container mode)
+$ hv API_KEY -- ./deploy.sh
+Error: Bootstrap proxy not responding at /run/hostvault/external.sock
+         Is the container server running?
+         Hint: Check the devcontainer initialization logs.
+(Exit code 12)
+
+# Internal IPC failure (container mode)
+$ hv API_KEY -- ./deploy.sh
+Error: Internal IPC channel error
+         Failed to communicate with bootstrap proxy.
+         The proxy may have crashed or restarted.
+(Exit code 13)
+
+# Socket security violation
+$ hv API_KEY -- ./deploy.sh
+Error: Socket security violation
+         External socket has incorrect permissions.
+         Expected: directory 0700, socket 0600
+(Exit code 14)
 ```
 
 ## Shell Integration
