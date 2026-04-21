@@ -28,6 +28,8 @@ The system uses a Unix domain socket for communication and implements a multi-la
 
 ## System Architecture
 
+### Standard Mode (Direct Connection)
+
 ```mermaid
 graph TB
     subgraph macOS["macOS (Server)"]
@@ -70,6 +72,57 @@ graph TB
     style CLIComponents fill:#e8f4f8,stroke:#333
 ```
 
+### Container Mode (3-Tier with Bootstrap Proxy)
+
+```mermaid
+graph TB
+    subgraph macOS["macOS (Host Server)"]
+        direction TB
+        GUI["GUI App<br/>(Swift/SwiftUI)"] --> AuthEngine["Authorization Engine"]
+
+        subgraph AuthEngine["Authorization Engine"]
+            direction LR
+            BioAuth["Biometric Auth<br/>(Touch ID/Face ID)"] --> UserApproval["User Approval<br/>Dialog"]
+        end
+
+        GUI --> Allowlist["Allowlist<br/>(JSON)"]
+        AuthEngine --> Allowlist
+        AuthEngine --> SecretStore["Secret Store<br/>(Keychain)"]
+
+        HostSocket["Host Socket<br/>(~/Library/Application Support/HostVault/hostvault.sock)"]
+    end
+
+    SSH["SSH / Forwarded Socket"] --> HostSocket
+
+    subgraph Devcontainer["Devcontainer (Linux)"]
+        direction TB
+        BootstrapProxy["Bootstrap Proxy<br/>(hv-proxy)<br/>PID 1 / Early Start"]
+
+        subgraph ExternalSocket["External Interface (Trusted Boundary)"]
+            ExtSocket["Unix Socket<br/>(/run/hostvault/external.sock)<br/>0700 / 0600"]
+        end
+
+        subgraph InternalIPC["Internal IPC Plane (FD-Only)"]
+            SocketPair["socketpair(AF_UNIX)<br/>No Filesystem Presence"]
+        end
+
+        subgraph ContainerClients["Container Clients"]
+            ContainerCLI["hv CLI<br/>(via inherited FD)"]
+        end
+    end
+
+    HostSocket --> BootstrapProxy
+    BootstrapProxy --> ExtSocket
+    ExtSocket -.->|Exclusive Bind| BootstrapProxy
+    BootstrapProxy --> SocketPair
+    SocketPair --> ContainerCLI
+
+    style macOS fill:#f0f0f0,stroke:#333
+    style Devcontainer fill:#f0f0f0,stroke:#333
+    style AuthEngine fill:#e8f4f8,stroke:#333
+    style ExternalSocket fill:#ffe8e8,stroke:#333
+    style InternalIPC fill:#e8ffe8,stroke:#333
+
 ## Goals & Objectives
 
 ### Primary Goals
@@ -78,6 +131,7 @@ graph TB
 3. **Cross-Platform Support**: Server on macOS, client on Linux (ARM64/x86_64) and macOS (ARM64)
 4. **Minimal Attack Surface**: Unix domain socket communication only (no network exposure)
 5. **Audit Trail**: Log all authorization decisions with timestamps
+6. **Devcontainer Security**: Secure containerized environments with a bootstrap proxy that creates hardened socket boundaries, preventing rogue process interference via FD-only internal IPC
 
 ### Success Criteria
 - [ ] Server runs as native macOS app with menu bar/system tray integration
@@ -110,11 +164,14 @@ graph TB
 | `9` | Biometric Failed | Biometric authentication failed or was cancelled |
 | `10` | Command Not Found | The command after `--` was not found or not executable |
 | `11` | Command Failed | Command executed but returned non-zero exit code |
+| `12` | Bootstrap Proxy Not Running | Container server not available at external socket |
+| `13` | Internal IPC Error | Communication failure between proxy and client via socketpair |
+| `14` | Socket Security Violation | External socket permission/ownership check failed |
 
 ## Implementation Phases
 
 ### Phase 1: MVP (Core Functionality)
-**Duration**: 2 weeks
+**Duration**: 3 weeks
 
 - [ ] Server: Socket listener with basic JSON protocol
 - [ ] Server: Health check endpoint (fast, no auth)
@@ -125,6 +182,15 @@ graph TB
 - [ ] Client: Health check before full requests (500ms timeout, short-circuit)
 - [ ] Client: Connection error handling
 - [ ] Client: Exit codes 0, 1, 2, 4, 10, 11
+- [ ] Bootstrap Proxy: Binary with busybox pattern (argv[0] detection)
+- [ ] Bootstrap Proxy: External socket creation with exclusive bind
+- [ ] Bootstrap Proxy: Configurable socket path (default: `/run/hostvault/external.sock`)
+- [ ] Bootstrap Proxy: Socket permissions enforcement (0700/0600)
+- [ ] Bootstrap Proxy: Upstream connection to host server
+- [ ] Bootstrap Proxy: Internal IPC plane (socketpair, no filesystem presence)
+- [ ] Bootstrap Proxy: Request forwarding with client context preservation
+- [ ] Client: Container mode auto-detection and internal IPC connection
+- [ ] Client: Exit codes 12, 13, 14 for bootstrap proxy scenarios
 
 ### Phase 2: Security, Persistence & Allowlist
 **Duration**: 3 weeks
@@ -194,6 +260,10 @@ graph TB
 - **Health Check**: Lightweight ping/pong request to verify server availability (no auth, <100ms response)
 - **Command**: The full command string that the client intends to execute with the requested secrets (displayed in auth dialog and logged)
 - **Command Separator**: The `--` delimiter that separates env var names from the command to execute
+- **Bootstrap Proxy**: Container-side server (argv[0] = "hv-proxy") that manages socket boundaries between host server and container clients
+- **External Socket**: Unix domain socket at configurable path (default: `/run/hostvault/external.sock`) - the host→container entry point with strict permissions (0700/0600)
+- **Internal IPC Plane**: File-descriptor-only channel (socketpair) between proxy and clients with no filesystem presence
+- **Busybox Pattern**: Single binary that inspects argv[0] to select command mode (`hv` for client, `hv-proxy` for bootstrap proxy)
 
 ---
 

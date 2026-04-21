@@ -250,10 +250,16 @@ The server GUI must provide comprehensive access log collection and management:
 1. **Allowlist Manager**: Maintains list of permitted env var names; all requests filtered against this list
 2. **Biometric Auth Engine**: Handles Touch ID / Face ID / Passcode prompts using LocalAuthentication
 3. **Authorization Dialog**: GUI shown only after successful biometric authentication, displays command to be executed
-4. **Socket Handler**: Manages Unix domain socket connections and JSON protocol
+4. **Socket Handler**: Manages Unix domain socket connections and JSON protocol; supports proxied connections from bootstrap proxy with original client context preservation
 5. **Secret Store**: macOS Keychain wrapper for encrypted secret value storage
 6. **Health Handler**: Fast endpoint that responds immediately without auth checks (used for client pre-flight)
 7. **Log Manager**: Collects, stores, and manages audit logs with purge capabilities
+
+**Proxy Support**: When requests come through a bootstrap proxy (container environments), the Socket Handler:
+- Accepts connections from the proxy as trusted forwarders
+- Extracts original client context from `client_info` (hostname, PID, CWD, user)
+- Logs the `proxied_by` field for audit trail
+- Performs all authorization checks (allowlist, biometric) as if client connected directly
 
 ## Allowlist Configuration Format
 

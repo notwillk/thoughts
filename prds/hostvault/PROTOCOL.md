@@ -10,6 +10,7 @@
 - [Protocol Flow](#protocol-flow)
 - [Request Processing Flow](#request-processing-flow)
 - [Socket Path Resolution](#socket-path-resolution)
+- [Container/Bootstrap Proxy Protocol](#containerbootstrap-proxy-protocol)
 
 ## Socket Protocol Specification
 
@@ -200,9 +201,106 @@ Resolution order (highest to lowest priority):
 3. `socket_path` in config file (`~/.config/hv/config.yaml`)
 4. Default: `~/Library/Application Support/HostVault/hostvault.sock`
 
+## Container/Bootstrap Proxy Protocol
+
+When running inside a devcontainer or containerized environment, HostVault uses a **3-tier architecture** with a bootstrap proxy to provide hardened socket isolation.
+
+### Dual-Socket Security Model
+
+**External Socket (Host→Container Entry Point)**:
+- **Path**: Configurable (default: `/run/hostvault/external.sock`)
+- **Directory Permissions**: `0700` (owner rwx only)
+- **Socket Permissions**: `0600` (owner read/write only)
+- **Ownership**: Bootstrap proxy exclusively
+- **Access**: Only the bootstrap proxy may bind/accept this socket
+
+**Internal IPC Plane (Container Internal)**:
+- **Technology**: `socketpair(AF_UNIX, SOCK_STREAM)`
+- **Properties**: No filesystem presence, FD-based only
+- **Access**: Clients receive socket FD via inheritance or `SCM_RIGHTS` from proxy
+- **Security**: Not discoverable via filesystem, not raceable via path lookup
+
+### Bootstrap Proxy Lifecycle
+
+1. **Startup Phase (Critical Window)**
+   - Container starts, proxy launches immediately (PID 1 or early init)
+   - Proxy creates external socket with exclusive bind
+   - Proxy connects upstream to host server
+   - Proxy creates internal socketpair for client IPC
+
+2. **Steady State**
+   - Proxy accepts client connections via internal FD only
+   - Proxy forwards requests with original client context preserved
+   - Proxy aggregates health checks from upstream
+
+### Connection Flow (Container Mode)
+
+```mermaid
+sequenceDiagram
+    participant Host as Host Server (macOS)
+    participant Proxy as Bootstrap Proxy (hv-proxy)
+    participant Client as Container Client (hv)
+
+    Note over Proxy: Startup Phase
+    Proxy->>Proxy: 1. Bind external.sock (exclusive)
+    Proxy->>Host: 2. Connect to host socket
+    Proxy->>Host: 3. Health check
+    Host-->>Proxy: 4. Health OK
+    Proxy->>Proxy: 5. Create socketpair (internal IPC)
+
+    Note over Proxy: Steady State
+    Client->>Proxy: 6. Connect via inherited FD<br/>(from parent or SCM_RIGHTS)
+    Client->>Proxy: 7. Secret request
+    Proxy->>Proxy: 8. Verify client via internal FD
+    Proxy->>Host: 9. Forward with original client context
+    Host->>Host: 10. Biometric auth + allowlist check
+    Host-->>Proxy: 11. Response
+    Proxy-->>Client: 12. Forward response
+```
+
+### Proxy Request Forwarding
+
+The bootstrap proxy preserves the original client context when forwarding requests to the host server:
+
+```json
+{
+  "version": "1.0",
+  "request_id": "uuid-v4-string",
+  "timestamp": "ISO8601-string",
+  "client_info": {
+    "hostname": "original-client-hostname",
+    "user": "original-client-user",
+    "pid": 12345,
+    "cwd": "/original/working/dir",
+    "proxied_by": "bootstrap-proxy-container-id"
+  },
+  "secrets": ["SECRET_NAME_1", "SECRET_NAME_2"],
+  "command": "node server.js"
+}
+```
+
+The `proxied_by` field indicates the request was forwarded through a bootstrap proxy, while other `client_info` fields reflect the original container client (not the proxy).
+
+### Bootstrap Proxy Configuration
+
+**Socket Paths** (configurable via CLI flags):
+- `--external-socket <PATH>`: External socket path (default: `/run/hostvault/external.sock`)
+- `--upstream-socket <PATH>`: Host server socket (default: `~/Library/Application Support/HostVault/hostvault.sock`)
+
+**Environment Variables**:
+- `HV_EXTERNAL_SOCKET`: Override external socket path
+- `HV_UPSTREAM_SOCKET`: Override upstream host server socket
+
+### Security Invariants
+
+1. **Exclusive Ownership**: After bootstrap, only the proxy process can accept connections on the external socket
+2. **FD-Only Internal IPC**: Container clients cannot discover or connect to internal channels via filesystem
+3. **Context Preservation**: Host server sees original client identity for authorization decisions
+4. **No Proxy Bypass**: Rogue processes cannot circumvent the proxy to reach the host server directly
+
 ---
 
-*See also: [Exit Codes](./README.md#exit-codes) in the Overview, [CLI Configuration](./CLI.md#configuration), and [macOS App Socket Settings](./MACOS-APP.md#configuration)*
+*See also: [Exit Codes](./README.md#exit-codes) in the Overview, [CLI Configuration](./CLI.md#configuration), [Container Security](./SECURITY.md#container-socket-security-hardened), and [macOS App Socket Settings](./MACOS-APP.md#configuration)*
 
 ---
 

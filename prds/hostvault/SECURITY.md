@@ -6,6 +6,7 @@
 
 - [Threat Model](#threat-model)
 - [Security Features](#security-features)
+- [Container Socket Security (Hardened)](#container-socket-security-hardened)
 - [Privacy](#privacy)
 - [Biometric Authentication Requirements](#biometric-authentication-requirements)
 - [Security Mitigations Summary](#security-mitigations-summary)
@@ -81,6 +82,112 @@
 - Command is logged for audit purposes
 - This prevents "hidden" command execution where user doesn't know what will run
 
+## Container Socket Security (Hardened)
+
+When running in containerized environments, HostVault implements a **hardened 3-tier architecture** with strict socket boundaries to prevent rogue process interference.
+
+### External Interface (Only Entry Point)
+
+**Socket Configuration**:
+- **Type**: Unix domain socket
+- **Path**: Configurable (default: `/run/hostvault/external.sock`)
+- **Directory Permissions**: `0700` (owner rwx only)
+- **Socket Permissions**: `0600` (owner read/write only)
+- **Ownership**: Bootstrap proxy exclusively
+
+**Behavior**:
+- Only one process ever binds and accepts this socket
+- That process is the bootstrap proxy
+- No other container process can bind to or accept connections on this socket
+
+### Bootstrap Proxy (Trusted Gatekeeper)
+
+**Lifecycle**:
+- Starts immediately at container launch (PID 1 or early init)
+- First (and only) process allowed to interact with external socket
+- Establishes connection to upstream host server
+- Transitions into proxy mode after successful upstream connection
+
+**Responsibilities**:
+1. Bind external socket with exclusive ownership
+2. Connect/accept on external socket (host→container traffic only)
+3. Perform initial handshake with upstream server
+4. Create internal IPC plane (socketpair)
+5. Forward client requests with original context preserved
+
+### Internal IPC Plane (Trusted Boundary)
+
+After bootstrap completes, all internal container communication uses FD-based channels:
+
+**Technology**: `socketpair(AF_UNIX, SOCK_STREAM)`
+
+**Properties**:
+- No filesystem socket path exposed
+- Not discoverable via filesystem enumeration
+- Not raceable via path lookup
+- Only reachable via explicit FD handoff from proxy
+
+**Alternative (if socketpair unavailable)**:
+- Internal Unix socket in private directory: `/run/hostvault/internal/`
+- Directory permissions: `0700`
+- Only proxy knows the path
+
+### Container Clients (Untrusted Except Proxy)
+
+**Behavior**:
+- Do NOT access external socket directly
+- Communicate only with proxy via internal FD-based channel
+- Have no ability to create new trusted connections to external socket
+
+### Connection Flow
+
+**Startup Phase (Critical Window)**:
+1. Container starts
+2. Bootstrap proxy starts immediately
+3. Proxy binds external socket (exclusive ownership)
+4. Proxy becomes only accepted peer on external socket
+
+**Post-Bootstrap Steady State**:
+```
+external socket (host→container)
+    ↓
+bootstrap proxy (only accepted connection owner)
+    ↓
+internal socketpair / FD handoff
+    ↓
+client processes (local IPC only)
+```
+
+### Socket Configuration Summary
+
+| Socket | Path | Permissions | Owner | Role |
+|--------|------|-------------|-------|------|
+| External | `/run/hostvault/external.sock` | 0700/0600 | Bootstrap proxy only | Ingress boundary only |
+| Internal | FD-based (socketpair) | N/A (kernel-owned) | Proxy ↔ Clients | Trusted internal IPC |
+
+### Security Properties Achieved
+
+**Prevented Threats**:
+
+| Threat | Mitigation |
+|--------|------------|
+| Inter-process MITM on external socket | Proxy exclusive ownership after bootstrap |
+| Rogue process connecting later and hijacking traffic | External socket not accessible to non-proxy processes |
+| Socket file replacement attacks | Permissions 0700/0600 + exclusive bind timing |
+| Internal interception | FD-only channels, no filesystem presence |
+| Path-based race conditions | socketpair has no filesystem path |
+
+**Acknowledged Limitations**:
+- Startup race window exists (external socket takeover before proxy starts)
+- Same-privilege processes could interfere during bootstrap if they execute early enough
+- No protection against fully compromised container runtime
+
+### Core Invariant
+
+> After bootstrap completes, all trusted communication flows only through kernel-owned, non-path-based file descriptor channels controlled exclusively by the proxy process.
+
+This invariant ensures that even if a rogue process gains execution within the container after startup, it cannot intercept, impersonate, or hijack HostVault communication channels.
+
 ## Privacy
 
 - Client hostname/user info only sent to server for authorization
@@ -113,7 +220,7 @@
 ## Security Mitigations Summary
 
 | Attack Vector | Mitigation | Verification |
-|--------------|------------|--------------|
+|--------------|------------|------------|
 | Unauthorized socket access | 0600 permissions + ownership check | See [Test Cases](./TEST-CASES.md#socket-security-tests) |
 | Replay attack | UUID + timestamp validation | See [Test Cases](./TEST-CASES.md#protocol-security-tests) |
 | Memory scraping | Secure buffers + mlock | Code review + memory analysis |
@@ -121,6 +228,9 @@
 | Allowlist bypass | Strict server-side filtering | See [Test Cases](./TEST-CASES.md#allowlist-tests) |
 | Brute force auth | 3-attempt limit + passcode fallback | See [Test Cases](./TEST-CASES.md#biometric-tests) |
 | Log tampering | Append-only logs, purge logged | File permissions audit |
+| Container rogue process MITM | Bootstrap proxy + exclusive socket ownership | See [Test Cases](./TEST-CASES.md#bootstrap-proxy-security-tests) |
+| Container socket replacement | 0700/0600 permissions + early bind | See [Test Cases](./TEST-CASES.md#bootstrap-proxy-security-tests) |
+| Container internal interception | FD-only IPC (socketpair, no filesystem) | See [Test Cases](./TEST-CASES.md#bootstrap-proxy-security-tests) |
 
 ---
 
