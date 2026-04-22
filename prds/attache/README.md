@@ -117,7 +117,7 @@ flowchart LR
 
     subgraph AgentState["Agent State"]
         Name["Agent Name<br/>(Mutual Agreement)"]
-        Memory["Memory<br/>(1st/2nd/3rd Party)"]
+        Memory["Memory<br/>(Semantic/Episodic/Procedural)"]
         Skills["Skills<br/>(Markdown + Python)"]
     end
 
@@ -220,15 +220,24 @@ New user onboarding:
 6. Name requires **mutual agreement** to change (neither party can rename alone)
 
 ### 7. Memory Model
-Three-tier data classification:
 
-| Tier | Description | Write Rules |
-|------|-------------|-------------|
-| **1st Party** | Inferred (preferences, tone detection) | Agent-written |
-| **2nd Party** | Explicitly stored user data | User-requested or agent-suggested |
-| **3rd Party** | External ingested data | Downloaded, indexed |
+Cognitive-inspired architecture with three memory types:
 
-All share storage, indexing, retrieval; differ by trust level.
+| Type | Purpose | Content | Source Tiers |
+|------|---------|---------|--------------|
+| **Semantic** | Factual knowledge | Facts, concepts, preferences | 1st (inferred), 2nd (explicit), 3rd (external) |
+| **Episodic** | Event experiences | Chat logs, data fetches, interactions | 1st (agent), 2nd (user), 3rd (external) |
+| **Procedural** | Skills & procedures | How to execute tasks | 1st (agent-created), 2nd (user-created), 3rd (community) |
+
+**Source Tiers** (within each type):
+- **1st Party**: Agent-inferred or agent-created
+- **2nd Party**: User-explicit or user-created
+- **3rd Party**: External/imported/community
+
+**Query Routing**:
+- "What do you know about X?" → Semantic Memory
+- "What did we discuss Y?" → Episodic Memory
+- "How do you do Z?" → Procedural Memory
 
 ### 8. Cone of Silence
 Ephemeral mode for sensitive interactions:
@@ -516,9 +525,12 @@ sync:
 - **Skill**: Reusable capability (Markdown + Python code)
 - **Card**: JSX component rendered from MDX, editable via forms
 - **Request Input**: Agent-initiated form-card requiring human response
-- **1st Party Memory**: Inferred user preferences, agent-written
-- **2nd Party Memory**: Explicitly stored user data
-- **3rd Party Memory**: External ingested and indexed data
+- **Semantic Memory**: Factual knowledge (facts, concepts, preferences) - "what you know"
+- **Episodic Memory**: Event experiences (chat logs, data fetches, interactions) - "what happened"
+- **Procedural Memory**: Skills and procedures (how to execute tasks) - "how to do it"
+- **1st Party**: Source tier - agent-inferred or agent-created content
+- **2nd Party**: Source tier - user-explicit or user-created content
+- **3rd Party**: Source tier - external or community content
 - **Reflection**: Agent self-maintenance process (consolidate, improve)
 - **A2A**: Agent-to-Agent protocol (Google spec)
 - **Volume**: Per-user storage container (primary + ephemeral cones)

@@ -140,7 +140,7 @@
 | STR-015 | Cancel with button | Click [Stop Request] | Stream shows "Cancelling..." then "Cancelled" |
 | STR-016 | Cancel with Escape×2 | Press Escape twice | Same as button cancel |
 | STR-017 | Cancel saved to log | Cancel query | Reasoning log saved with "cancelled" status |
-| STR-018 | Persistence | Query completes | Reasoning log stored in 3rd party memory |
+| STR-018 | Persistence | Query completes | Reasoning log stored in Episodic Memory (3rd party) |
 | STR-019 | Reflection access | Agent reflects | Can access old reasoning logs |
 | STR-020 | Reflection delete | Agent reflects | Can delete old reasoning logs |
 | STR-021 | Icons displayed | Different phases | Shows icons (search, read, analyze, write, check) |
@@ -192,25 +192,67 @@
 | SKILL-017 | Environment validation | Skill missing required env | Agent requests user to set secret |
 | SKILL-018 | Consolidation | Merge two skills | New combined skill created, old deprecated |
 
-## Memory Tests
+## Semantic Memory Tests (Factual Knowledge)
 
 | ID | Test Case | Steps | Expected Result |
 |----|-----------|-------|-----------------|
-| MEM-001 | 1st party inference | Agent detects preference | Memory stored with confidence score |
-| MEM-002 | 2nd party explicit | User: "Remember I like pizza" | Memory stored, user-tagged |
-| MEM-003 | 3rd party ingestion | Agent downloads web page | Content indexed, searchable |
-| MEM-004 | Semantic search | Query memory | Relevant results by vector similarity |
-| MEM-005 | Memory update | User corrects preference | Memory updated with new value |
-| MEM-006 | Memory confidence | Low confidence inference | Flagged for reflection review |
-| MEM-007 | Memory access tracking | Query memory | Access count and last accessed updated |
-| MEM-008 | 1st party write | Agent writes preference | Agent-authored, medium trust |
-| MEM-009 | 2nd party confirmation | Agent suggests, user confirms | Promoted to high trust |
-| MEM-010 | 3rd party expiration | Old web page | Auto-purged after TTL |
-| MEM-011 | Memory query | "What did we discuss last week?" | Relevant chat history found |
-| MEM-012 | Context loading | Agent processes query | Relevant memory loaded as context |
-| MEM-013 | Memory deduplication | Store similar memory | Existing memory updated, not duplicated |
-| MEM-014 | Archive recovery | Restore deleted memory | Soft-deleted memory recoverable |
-| MEM-015 | Vector indexing | New memory stored | Embedding generated and indexed |
+| SEM-001 | 1st party inference | Agent detects preference | Stored in Semantic Memory with confidence |
+| SEM-002 | 2nd party explicit | User: "Remember I like pizza" | Stored in Semantic Memory, user-tagged |
+| SEM-003 | 3rd party ingestion | Agent downloads web page | Stored in Semantic Memory, indexed |
+| SEM-004 | Semantic search | Query: "What do I like?" | Returns relevant Semantic Memory facts |
+| SEM-005 | Fact update | User corrects fact | Semantic Memory updated, version tracked |
+| SEM-006 | Low confidence | Agent inference confidence < 0.5 | Flagged for reflection review |
+| SEM-007 | Access tracking | Query Semantic Memory | Access count and last accessed updated |
+| SEM-008 | Trust tier | 1st party vs 2nd party vs 3rd | Correct trust level applied |
+| SEM-009 | Confirmation | Agent suggests, user confirms | Promoted to high trust (2nd party) |
+| SEM-010 | TTL expiration | Old 3rd party fact | Auto-purged after TTL |
+| SEM-011 | Consolidation | Similar facts exist | Reflection consolidates into one |
+| SEM-012 | Contradiction | Conflicting facts | Reflection flags for review |
+
+## Episodic Memory Tests (Events & Experiences)
+
+| ID | Test Case | Steps | Expected Result |
+|----|-----------|-------|-----------------|
+| EPS-001 | Chat event stored | User sends query, agent responds | Chat event stored in Episodic Memory |
+| EPS-002 | Data fetch logged | Skill fetches web data | Fetch event logged with duration, sources |
+| EPS-003 | Skill execution | Skill runs and completes | Execution event stored with outcome |
+| EPS-004 | User action | User edits file, cancels query | User action events stored |
+| EPS-005 | 1st party (agent) | Agent performs autonomous action | Agent experience event stored |
+| EPS-006 | Timeline query | "What did we discuss last week?" | Episodic Memory queried, events returned |
+| EPS-007 | Date range query | "What happened yesterday?" | Episodic events in date range returned |
+| EPS-008 | Pattern extraction | Multiple similar events | Reflection extracts pattern to Semantic |
+| EPS-009 | Event summarization | Old episode (30 days) | Reflection summarizes, compresses |
+| EPS-010 | Archive old events | Events > 90 days old | Moved to archive (still retrievable) |
+| EPS-011 | Event deduplication | Duplicate events detected | Consolidated into single event |
+| EPS-012 | Outcome tracking | Success/failure of operations | Outcome field correctly set |
+
+## Procedural Memory Tests (Skills & Procedures)
+
+| ID | Test Case | Steps | Expected Result |
+|----|-----------|-------|-----------------|
+| PRO-001 | 1st party skill | Agent creates skill autonomously | Stored in Procedural Memory, agent-tagged |
+| PRO-002 | 2nd party skill | User creates custom skill | Stored in Procedural Memory, user-tagged |
+| PRO-003 | 3rd party skill | Import community skill | Stored in Procedural Memory, community-tagged |
+| PRO-004 | Skill execution | Execute procedural skill | Skill runs from Procedural Memory |
+| PRO-005 | Usage tracking | Skill used 10 times | Usage count incremented |
+| PRO-006 | Success rate | Skill succeeds 8/10 times | Success rate calculated (80%) |
+| PRO-007 | Performance metrics | Track execution times | Avg execution time recorded |
+| PRO-008 | Optimization | Reflection improves skill | Skill updated, optimization logged |
+| PRO-009 | Skill consolidation | Overlapping skills detected | Skills merged, old deprecated |
+| PRO-010 | Self-modification | Skill rewrites itself | New version created, history preserved |
+| PRO-011 | Procedural query | "How do you search?" | Returns web_search skill from Procedural |
+| PRO-012 | Skill lookup | Query skill by capability | Returns matching skills |
+
+## Memory System Integration Tests
+
+| ID | Test Case | Steps | Expected Result |
+|----|-----------|-------|-----------------|
+| MEM-001 | Cross-type query | Ambiguous query | System routes to correct memory type |
+| MEM-002 | Semantic from Episodic | Extract fact from chat | Fact moved to Semantic Memory |
+| MEM-003 | Procedural improvement | Learn from Episodic | Skill improved based on execution history |
+| MEM-004 | Unified search | Query across all types | Results aggregated from all three types |
+| MEM-005 | Reflection routing | "Reflect on my knowledge" | Routes to appropriate memory processor |
+| MEM-006 | Exploration UI | Browse memories | Semantic/Episodic/Procedural tabs shown |
 
 ## Reflection Queue Tests
 

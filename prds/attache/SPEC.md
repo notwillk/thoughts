@@ -1312,89 +1312,182 @@ All operations logged. No special version control system - just files on disk.
 
 ## Memory Model
 
-### Memory Tiers
+Cognitive-inspired architecture with three memory types, each with 1st/2nd/3rd party sources:
 
-#### 1st Party Memory (Inferred)
+| Memory Type | Purpose | Content | Source Tiers |
+|-------------|---------|---------|--------------|
+| **Semantic** | Factual knowledge (what you know) | Facts, concepts, preferences | 1st (inferred), 2nd (explicit), 3rd (external) |
+| **Episodic** | Event experiences (what happened) | Chat logs, data fetches, interactions | 1st (agent experiences), 2nd (user events), 3rd (external events) |
+| **Procedural** | Skills & procedures (how to do it) | Skills, execution patterns, tools | 1st (agent-created), 2nd (user-created), 3rd (community/imported) |
+
+All share storage, indexing, and retrieval; differ by content type and access patterns.
+
+### Semantic Memory (Factual Knowledge)
+
+**Purpose**: Store facts, concepts, user preferences, learned knowledge
+
 ```typescript
-interface FirstPartyMemory {
+interface SemanticMemory {
   id: string;
-  type: "preference" | "pattern" | "inference";
-  content: string;
-  confidence: number;     // 0-1, agent's certainty
-  sourceEvents: string[]; // Timeline event IDs
+  type: "semantic";
+  
+  // Content classification
+  category: "preference" | "fact" | "concept" | "inference";
+  content: string;           // The knowledge/fact
+  confidence: number;        // 0-1 (for inferred knowledge)
+  
+  // Source (1st/2nd/3rd party)
+  source: {
+    tier: "1st" | "2nd" | "3rd";
+    origin: "inferred" | "explicit" | "external";
+    createdBy: "agent" | "user" | "import";
+  };
+  
+  // Metadata
   createdAt: Date;
   lastAccessed: Date;
   accessCount: number;
+  vector: number[];          // For semantic search
 }
 ```
 
-**Examples**:
-- "User prefers concise responses on mobile"
-- "User likes Python for scripting tasks"
-- "User's tone is informal"
+**Examples by Source**:
+- **1st party (inferred)**: "User prefers concise responses", "User likes Python"
+- **2nd party (explicit)**: "My favorite restaurant is Joe's Pizza", "Remind me Sundays"
+- **3rd party (external)**: "Rust was created in 2010", "From Wikipedia article"
 
-**Write**: Agent only  
-**Trust**: Medium (subject to reflection review)
+**Reflection Operations**:
+- Consolidate similar facts
+- Resolve contradictions
+- Update confidence scores
+- Archive low-confidence inferences
 
-#### 2nd Party Memory (Explicit)
+**Query Examples**:
+- "What do you know about me?" → Semantic Memory search
+- "What facts have you learned?" → Semantic Memory query
+
+### Episodic Memory (Event Experiences)
+
+**Purpose**: Store timeline of events, interactions, experiences
+
 ```typescript
-interface SecondPartyMemory {
+interface EpisodicMemory {
   id: string;
-  type: "fact" | "preference" | "goal" | "contact";
-  content: string;
-  source: "user" | "agent_suggestion";
-  confirmed: boolean;     // User confirmed agent suggestion?
-  createdAt: Date;
-  updatedAt: Date;
+  type: "episodic";
+  
+  // Event classification
+  eventType: "chat" | "data_fetch" | "skill_execution" | 
+             "user_action" | "agent_action" | "reflection";
+  timestamp: Date;
+  content: string;           // What happened
+  
+  // Context
+  context: {
+    query?: string;        // User's query (for chats)
+    response?: string;     // Agent's response
+    artifacts?: string[];  // Related artifacts
+    duration?: number;      // Event duration (seconds)
+    outcome?: "success" | "cancelled" | "failed";
+  };
+  
+  // Source
+  source: {
+    tier: "1st" | "2nd" | "3rd";
+    actor: "agent" | "user" | "system" | "external";
+  };
+  
+  // For retrieval
+  vector: number[];        // Embedding
+  tags: string[];           // ["rust", "research", "2024-01"]
 }
 ```
 
-**Examples**:
-- "My favorite restaurant is Joe's Pizza"
-- "I need to learn Rust by March"
-- "Remind me to call Mom on Sundays"
+**Examples by Source**:
+- **1st party (agent)**: "Agent researched Rust for 5m, found 12 sources"
+- **2nd party (user)**: "User cancelled query during research phase"
+- **3rd party (external)**: "External API returned 503 error at 14:23"
 
-**Write**: User or agent (suggestions require confirmation)  
-**Trust**: High (explicitly stored)
+**Reflection Operations**:
+- Summarize old episodes (compress)
+- Extract patterns ("User often cancels at phase X")
+- Archive by date ranges
+- Extract to Semantic Memory ("User likes quantum computing")
 
-#### 3rd Party Memory (External)
+**Query Examples**:
+- "What did we discuss last week?" → Episodic Memory query
+- "What was I working on yesterday?" → Episodic Memory search
+- "When did I ask about Rust?" → Episodic Memory timeline
+
+### Procedural Memory (Skills & Procedures)
+
+**Purpose**: Store skills, how to perform tasks, execution patterns
+
 ```typescript
-interface ThirdPartyMemory {
+interface ProceduralMemory {
   id: string;
-  type: "web_page" | "document" | "dataset";
-  source: string;         // URL or reference
-  title: string;
-  content: string;        // Extracted text
-  summary: string;
-  embedding: number[];    // Vector for semantic search
-  ingestedAt: Date;
-  lastAccessed: Date;
+  type: "procedural";
+  
+  // Skill definition
+  name: string;
+  description: string;
+  implementation: {
+    type: "python" | "jsx" | "composite";
+    code: string;
+    version: string;
+  };
+  
+  // Source
+  source: {
+    tier: "1st" | "2nd" | "3rd";
+    createdBy: "agent" | "user" | "community";
+  };
+  
+  // Performance metrics
+  usageCount: number;
+  successRate: number;
+  avgExecutionTime: number;
+  
+  // Reflection metadata
+  lastOptimized: Date;
+  optimizationHistory: OptimizationRecord[];
 }
 ```
 
-**Examples**:
-- Web pages downloaded and indexed
-- PDFs uploaded by user
-- Reference documentation
+**Examples by Source**:
+- **1st party (agent-created)**: "web_search" skill (agent inferred need)
+- **2nd party (user-created)**: User's "analyze_codebase" custom skill
+- **3rd party (community)**: Imported "weather_api" from skill marketplace
 
-**Write**: Agent (downloads), User (uploads)  
-**Trust**: Varies (source-dependent)
+**Reflection Operations**:
+- Optimize based on usage patterns
+- Consolidate overlapping skills
+- Improve success rates
+- Self-modify based on feedback
+
+**Query Examples**:
+- "How do you search the web?" → Procedural Memory (skill lookup)
+- "What skills do you have for Rust?" → Procedural Memory query
+- "Improve your research skill" → Procedural Memory reflection
 
 ### Memory Operations
 
 ```typescript
 interface MemoryAPI {
-  // Store
-  store(memory: Memory): Promise<void>;
+  // Store to specific memory type
+  storeSemantic(memory: SemanticMemory): Promise<void>;
+  storeEpisodic(memory: EpisodicMemory): Promise<void>;
+  storeProcedural(memory: ProceduralMemory): Promise<void>;
   
-  // Retrieve by ID
+  // Cross-type search (queries appropriate type based on query)
+  search(query: string, type?: MemoryType, limit?: number): Promise<Memory[]>;
+  
+  // Type-specific queries
+  querySemantic(filters: SemanticFilters): Promise<SemanticMemory[]>;
+  queryEpisodic(filters: EpisodicFilters): Promise<EpisodicMemory[]>;
+  queryProcedural(filters: ProceduralFilters): Promise<ProceduralMemory[]>;
+  
+  // Retrieve by ID (any type)
   get(id: string): Promise<Memory>;
-  
-  // Semantic search
-  search(query: string, limit?: number): Promise<Memory[]>;
-  
-  // Query by type/time
-  query(filters: MemoryFilters): Promise<Memory[]>;
   
   // Update
   update(id: string, updates: Partial<Memory>): Promise<void>;
@@ -1404,13 +1497,47 @@ interface MemoryAPI {
 }
 ```
 
+### Memory Type Selection
+
+**Agent automatically routes queries**:
+
+| User Query | Memory Type | Example |
+|------------|-------------|---------|
+| "What do you know about X?" | Semantic | Facts about X |
+| "What did we discuss Y?" | Episodic | Chat about Y |
+| "How do you do Z?" | Procedural | Skill for Z |
+| "What was I working on?" | Episodic | Recent activities |
+| "What are my preferences?" | Semantic | User profile |
+
 ### Vector Indexing
 
-All memory content indexed for semantic retrieval:
-- Embedding model: OpenAI text-embedding-3 or equivalent
-- Vector DB: Qdrant or pgvector
-- Chunking strategy: Paragraph-level for long documents
-- Metadata filtering: Type, date, source, tier
+All three memory types indexed for semantic retrieval:
+- **Embedding model**: OpenAI text-embedding-3 or equivalent
+- **Vector DB**: Qdrant or pgvector
+- **Strategy**: Type-specific chunking
+  - Semantic: Paragraph-level
+  - Episodic: Event-level with context
+  - Procedural: Skill-level with documentation
+
+### Exploration Interface
+
+```
+Explore
+├── 🔮 Semantic Memory      (Knowledge & Facts)
+│   ├── By Category: Preferences, Facts, Concepts
+│   ├── By Source: 1st Party, 2nd Party, 3rd Party
+│   └── Search: "What do I know?"
+│
+├── 📅 Episodic Memory      (History & Events)
+│   ├── Timeline: Chronological view
+│   ├── By Type: Chats, Data Fetches, Actions
+│   └── Search: "What happened?"
+│
+└── 🛠️ Procedural Memory    (Skills & Procedures)
+    ├── By Category: Research, Analysis, Tools
+    ├── By Source: Agent-created, User-created, Community
+    └── Search: "How do I?"
+```
 
 ## Secrets System
 
