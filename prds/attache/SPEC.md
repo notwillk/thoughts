@@ -260,7 +260,8 @@ commands:
 # Default task (run with 'r' key)
 default_task: "cargo test"
 
-# Skills discovery from filesystem
+# Skills discovery from filesystem (agentskills.io format)
+# Searches for SKILL.md files in subdirectories: .agents/skills/<name>/SKILL.md
 skills:
   # Search paths (relative to config file)
   locations:
@@ -327,10 +328,16 @@ TUI uses the local filesystem as the canvas, rather than virtual artifacts. This
 │  ├── Cargo.toml              ← Config                         │
 │  └── README.md               ← Documentation                  │
 │                                                                 │
-│  .agents/                    ← Local skills                   │
+│  .agents/                    ← Local skills (agentskills.io)   │
 │  └── skills/                                                  │
-│      ├── rust_linter.yaml                                    │
-│      └── test_runner.yaml                                    │
+│      ├── rust-linter/                                        │
+│      │   ├── SKILL.md                                        │
+│      │   └── scripts/                                        │
+│      │       └── lint.py                                     │
+│      └── test-runner/                                        │
+│          ├── SKILL.md                                        │
+│          └── scripts/                                        │
+│              └── run_tests.py                                │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -581,49 +588,85 @@ impl OfflineManager {
 
 ### Local Skills
 
-TUI can load skills from the filesystem, enabling project-specific capabilities:
+TUI can load skills from the filesystem, enabling project-specific capabilities. Skills follow the [agentskills.io](https://agentskills.io/) specification (source of truth for skill format).
 
-```yaml
-# .agents/skills/rust_linter.yaml
-name: "rust_linter"
-description: "Lint Rust code using cargo clippy"
-executor: "python"
-local: true  # This is a filesystem skill
+```markdown
+<!-- .agents/skills/rust-linter/SKILL.md -->
+---
+name: rust-linter
+description: Lint Rust code using cargo clippy. Use when working with Rust projects, before committing code, or when the user mentions clippy, lints, or Rust errors.
+license: MIT
+compatibility: Requires cargo and clippy installed
+metadata:
+  attache:
+    id: rust_linter_v1
+    category: code-quality
+    tier: fast
+    modality: text
+    estimated-cost: 0.0001
+---
 
-model_hints:
-  tier: "fast"
+## Available Scripts
 
-main: |
-  import subprocess
-  import json
-  
-  def main(files=None):
-      cmd = ["cargo", "clippy", "--message-format=json"]
-      if files:
-          cmd.extend(["--package", files[0].split('/')[0]])
-      
-      result = subprocess.run(cmd, capture_output=True, text=True)
-      
-      # Parse JSON output
-      issues = []
-      for line in result.stdout.split('\n'):
-          if line:
-              try:
-                  msg = json.loads(line)
-                  if msg.get("reason") == "compiler-message":
-                      issues.append({
-                          "file": msg["message"]["spans"][0]["file_name"],
-                          "line": msg["message"]["spans"][0]["line_start"],
-                          "message": msg["message"]["message"],
-                          "level": msg["message"]["level"]
-                      })
-              except:
-                  pass
-      
-      return {
-          "issues": issues,
-          "count": len(issues)
-      }
+- `scripts/lint.py` - Run clippy and parse output
+
+## Usage
+
+Run the linter on the entire project:
+
+```bash
+python3 scripts/lint.py
+```
+
+Or on specific files:
+
+```bash
+python3 scripts/lint.py src/main.rs src/lib.rs
+```
+```
+
+```python
+# .agents/skills/rust-linter/scripts/lint.py
+# /// script
+# dependencies = []
+# ///
+
+import subprocess
+import json
+import sys
+
+def main(files=None):
+    cmd = ["cargo", "clippy", "--message-format=json"]
+    if files:
+        cmd.extend(["--package", files[0].split('/')[0]])
+    
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    
+    # Parse JSON output
+    issues = []
+    for line in result.stdout.split('\n'):
+        if line:
+            try:
+                msg = json.loads(line)
+                if msg.get("reason") == "compiler-message":
+                    issues.append({
+                        "file": msg["message"]["spans"][0]["file_name"],
+                        "line": msg["message"]["spans"][0]["line_start"],
+                        "message": msg["message"]["message"],
+                        "level": msg["message"]["level"]
+                    })
+            except:
+                pass
+    
+    return {
+        "issues": issues,
+        "count": len(issues)
+    }
+
+if __name__ == "__main__":
+    files = sys.argv[1:] if len(sys.argv) > 1 else None
+    result = main(files)
+    print(json.dumps(result))
 ```
 
 **Skill Discovery**:
@@ -641,17 +684,21 @@ pub async fn discover_local_skills(locations: &[PathBuf]) -> Vec<Skill> {
         while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
             
-            if path.extension() == Some("yaml") {
-                let content = tokio::fs::read_to_string(&path).await?;
-                let skill: Skill = serde_yaml::from_str(&content)?;
-                
-                // Mark as filesystem skill
-                let skill = skill.with_source(SkillSource::Filesystem {
-                    path: path.clone(),
-                    readonly: true,
-                });
-                
-                skills.push(skill);
+            // Look for SKILL.md in subdirectories
+            if path.is_dir() {
+                let skill_md = path.join("SKILL.md");
+                if skill_md.exists() {
+                    let content = tokio::fs::read_to_string(&skill_md).await?;
+                    let skill = parse_skill_md(&content)?;
+                    
+                    // Mark as filesystem skill
+                    let skill = skill.with_source(SkillSource::Filesystem {
+                        path: path.clone(),
+                        readonly: true,
+                    });
+                    
+                    skills.push(skill);
+                }
             }
         }
     }
@@ -661,7 +708,7 @@ pub async fn discover_local_skills(locations: &[PathBuf]) -> Vec<Skill> {
 ```
 
 **Skill Precedence**:
-1. Filesystem skills (from `.agents/skills`) - **READONLY for this session**
+1. Filesystem skills (from `.agents/skills/<name>/SKILL.md`) - **READONLY for this session**
 2. Server skills (from skill registry) - **READWRITE**
 3. If name collision: filesystem skill wins
 
@@ -749,17 +796,20 @@ Client Display
 
 ### Custom Components from Skills
 
-Skills can register custom components:
+Skills can register custom components via `references/components.md`:
 
-```yaml
-# skill.yaml
-name: "data_visualizer"
-components:
-  - name: "ChartCard"
-    props:
-      type: { type: "string", enum: ["line", "bar", "pie"] }
-      data: { type: "array" }
-      title: { type: "string" }
+```markdown
+<!-- .agents/skills/data-visualizer/references/components.md -->
+# Components
+
+## ChartCard
+
+Renders interactive charts (line, bar, pie).
+
+Props:
+- `type` (enum: "line", "bar", "pie") - Chart type
+- `data` (array) - Data points
+- `title` (string) - Chart title
 ```
 
 Components are bundled and served as HTML/CSS to the frontend.
@@ -1180,52 +1230,74 @@ stream_of_consciousness:
 
 ## Skills System
 
+> **Source of Truth**: Skills follow the [agentskills.io specification](https://agentskills.io/specification). This section documents Attaché-specific extensions.
+
 ### Skill Definition
 
-```yaml
-# skill.yaml (stored in skills/ directory as regular files)
-id: "web_search_v2"
-name: "Web Search"
-description: "Search the web for current information"
-category: "research"
-version: "2.1.0"
+Skills are directories containing a `SKILL.md` file with YAML frontmatter and Markdown instructions:
 
-# Model hints for routing
-tier: "fast"           # fast | balanced | advanced
-modality: "text"       # text | vision | multilateral
-estimated_cost: 0.001  # USD per invocation
-
-# Execution
-executor: "python"
-main: "search.py"
-
-# Environment variables required
-env:
-  - name: "SERP_API_KEY"
-    description: "SerpAPI key for search"
-    required: true
-  - name: "MAX_RESULTS"
-    description: "Maximum results to return"
-    default: "10"
-
-# Components this skill provides
-components:
-  SearchResultsCard:
-    description: "Display search results"
-    props:
-      query: { type: "string" }
-      results: { type: "array" }
-
-# Examples for few-shot prompting
-examples:
-  - input: "Search for Rust async patterns"
-    output: "Results displayed in SearchResultsCard"
-
-# Lifecycle hooks
-hooks:
-  on_load: "setup.py"
-  on_unload: "cleanup.py"
 ```
+web-search/
+├── SKILL.md              # Required: metadata + instructions
+├── scripts/              # Optional: executable code
+│   └── search.py
+├── references/           # Optional: documentation
+│   └── components.md     # Attaché: JSX component definitions
+└── assets/               # Optional: templates, resources
+```
+
+**SKILL.md Format**:
+
+```markdown
+---
+name: web-search
+description: Search the web for current information. Use when the user needs up-to-date facts, current events, or information not in your training data.
+license: MIT
+metadata:
+  attache:
+    id: web_search_v2
+    category: research
+    tier: fast
+    modality: text
+    estimated-cost: 0.001
+---
+
+## Available Scripts
+
+- `scripts/search.py` - Execute web search using SERP API
+
+## Usage
+
+Run the search script with your query:
+
+```bash
+python3 scripts/search.py "your search query"
+```
+
+## Components
+
+See [references/components.md](references/components.md) for UI components.
+```
+
+### agentskills.io Standard Fields
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `name` | Yes | Lowercase, hyphens, max 64 chars. Must match directory name. |
+| `description` | Yes | Max 1024 chars. Describe what AND when to use. |
+| `license` | No | License name or file reference. |
+| `compatibility` | No | Environment requirements (e.g., "Requires Python 3.11+"). |
+| `metadata` | No | Arbitrary key-value pairs for agent-specific extensions. |
+
+### Attaché Extensions (in `metadata.attache`)
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Unique skill identifier (e.g., "web_search_v2"). |
+| `category` | string | Skill category for organization. |
+| `tier` | enum | Model routing hint: `fast`, `balanced`, `advanced`. |
+| `modality` | enum | Input type: `text`, `vision`, `multilateral`. |
+| `estimated-cost` | number | USD cost per invocation (for routing optimization). |
 
 ### Skill Execution Environment
 
@@ -1236,10 +1308,9 @@ hooks:
 - Resource limits: CPU, memory, disk
 - Timeout enforcement
 
-**Python Runtime**:
-- Python 3.11+
-- Standard library only (no pip installs)
-- Pre-installed packages: requests, json, re, datetime
+**Script Execution**:
+- Python, Bash, JavaScript, or any executable
+- Scripts declare dependencies inline (PEP 723 for Python, etc.)
 - Skill can call other skills via API
 - Skill can rewrite itself (self-modification)
 
@@ -1247,13 +1318,13 @@ hooks:
 ```
 Agent receives task
     ↓
-Skill selected based on model hints + routing
+Skill selected based on metadata.attache routing hints
     ↓
 Environment variables injected (from Agent Secrets volume ONLY)
     ↓
 Sandbox spawned
     ↓
-Python code executes
+Script executes
     ↓
 Result returned to agent
     ↓
@@ -1295,20 +1366,48 @@ def main(query: str, max_results: int = 10) -> dict:
 
 ### Skill Storage
 
-Skills are stored as regular files in the filesystem (like artifacts):
-- Markdown description (YAML frontmatter)
-- Python code
-- Component definitions
-- Examples
+Skills are stored as directories in the filesystem:
+- `SKILL.md` - Metadata + instructions
+- `scripts/` - Executable code
+- `references/` - Documentation and component definitions
+- `assets/` - Static resources
 
 **Operations**:
-- Create new skill (write file)
-- Update existing skill (versioned via version field)
-- Deprecate skill (moved to archive directory, not deleted)
+- Create new skill (write directory)
+- Update existing skill (modify files, version tracked in `id` field)
+- Deprecate skill (moved to archive, not deleted)
 - Consolidate skills (merge related skills)
 - Rewrite skill (self-modification)
 
 All operations logged. No special version control system - just files on disk.
+
+### References Directory
+
+The `references/` directory contains optional documentation:
+
+```
+web-search/
+├── SKILL.md
+├── scripts/
+│   └── search.py
+└── references/
+    ├── components.md     # JSX component definitions
+    ├── REFERENCE.md      # Detailed technical reference
+    └── examples.md       # Usage examples
+```
+
+**components.md** (Attaché-specific):
+```markdown
+# Components
+
+## SearchResultsCard
+
+Display web search results with clickable links.
+
+Props:
+- `query` (string): The search query
+- `results` (array): Array of {title, url, snippet} objects
+```
 
 ## Memory Model
 

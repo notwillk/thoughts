@@ -249,24 +249,42 @@ Ephemeral mode for sensitive interactions:
 - Suggestion triggers **after** cone starts (not including triggering query)
 
 ### 9. Skills System
-Reusable capabilities defined as:
-```yaml
-name: "web_search"
-description: "Search the web for information"
-executor: "python"  # Python code
-model_hints:
-  tier: "fast"      # fast | balanced | advanced
-  modality: "text"   # text | vision | multilateral
-env:
-  - SERP_API_KEY    # Required secrets
+
+Reusable capabilities following the [agentskills.io](https://agentskills.io/) specification (source of truth for skill format).
+
+```markdown
+<!-- .agents/skills/web-search/SKILL.md -->
+---
+name: web-search
+description: Search the web for information. Use when the user needs current facts, news, or data not in your training.
+license: MIT
+metadata:
+  attache:
+    id: web_search_v2
+    tier: fast
+    modality: text
+---
+
+## Available Scripts
+
+- `scripts/search.py` - Execute web search
+```
+
+**Directory Structure**:
+```
+skill-name/
+├── SKILL.md          # Required: metadata + instructions
+├── scripts/          # Optional: executable code
+├── references/       # Optional: docs, components
+└── assets/           # Optional: templates, resources
 ```
 
 Skills can:
-- Be written in Python (WASM sandbox)
+- Follow [agentskills.io specification](https://agentskills.io/specification)
+- Extend via `metadata.attache.*` for Attaché-specific features (routing hints, components)
 - Call other skills
 - Rewrite themselves
-- Include JSX components for rendering
-- Declare required environment variables
+- Reference JSX components in `references/components.md`
 
 ### 10. Reflection System
 Periodic self-maintenance:
@@ -413,7 +431,7 @@ sync:
 - [ ] Artifacts: text editor with syntax highlighting, card forms, media display
 - [ ] Agent responses: message, artifact_update, request_input, decline
 - [ ] MDX/JSX runtime: safe sandboxed component rendering
-- [ ] Skills system: Python execution, skill-calling-skill, self-modification
+- [ ] Skills system: agentskills.io compatible, skill-calling-skill, self-modification
 - [ ] Memory model: 1st/2nd/3rd party with reflection maintenance
 - [ ] Secrets: encrypted storage, JWT-based access, redaction system
 - [ ] Cone of Silence: ephemeral volumes, visual distinction, per-client isolation
@@ -427,7 +445,7 @@ sync:
 - [ ] TUI: command execution with allowlist/approval
 - [ ] TUI: filesystem watching with agent change deduplication
 - [ ] TUI: offline editing with batch sync
-- [ ] TUI: local skills from `.agents/skills`
+- [ ] TUI: local skills from `.agents/skills/<name>/SKILL.md`
 - [ ] Mobile: adapted experience with location context
 
 ## Implementation Phases
@@ -443,7 +461,7 @@ sync:
 - [ ] Card artifact system (built-in components)
 - [ ] Agent loop: message + artifact_update
 - [ ] Genesis experience
-- [ ] Basic skills (Python sandbox)
+- [ ] Basic skills (agentskills.io format, Python sandbox)
 - [ ] Memory foundation (1st/2nd party)
 - [ ] Secrets panel
 - [ ] Real-time sync (SSE)
@@ -455,7 +473,7 @@ sync:
 
 - [ ] LLM routing with cost optimization
 - [ ] A2A protocol gateway
-- [ ] Advanced skills (skill-calling-skill)
+- [ ] Advanced skills (agentskills.io, skill-calling-skill)
 - [ ] Reflection system (basic)
 - [ ] Request_input UX
 - [ ] File upload & processing
@@ -469,7 +487,7 @@ sync:
 - [ ] Exploration interface
 - [ ] Advanced reflection (budget management)
 - [ ] 3rd party data ingestion
-- [ ] Custom JSX components in skills
+- [ ] Custom JSX components in skills (references/components.md)
 - [ ] Multitenancy
 - [ ] Speech interface
 - [ ] Self-hosting documentation
@@ -481,7 +499,7 @@ sync:
 - [ ] App Store distribution
 - [ ] Performance optimization
 - [ ] Documentation & tutorials
-- [ ] Community skill marketplace
+- [ ] Community skill marketplace (agentskills.io compatible)
 
 ## Technology Stack
 

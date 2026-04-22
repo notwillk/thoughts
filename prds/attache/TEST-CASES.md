@@ -183,14 +183,17 @@
 | SKILL-008 | Skill memory limit | Skill uses too much RAM | OOM killer terminates sandbox |
 | SKILL-009 | Skill CPU limit | Skill uses too much CPU | Throttling applied |
 | SKILL-010 | Skill error | Skill throws exception | Error caught, user-friendly message |
-| SKILL-011 | Skill registry | List available skills | All skills displayed with descriptions |
-| SKILL-012 | Skill versioning | Update existing skill | Version incremented, rollback available |
+| SKILL-011 | Skill discovery | List available skills | All SKILL.md files discovered and loaded |
+| SKILL-012 | SKILL.md format | Parse agentskills.io format | name, description, metadata extracted |
 | SKILL-013 | Skill deprecation | Mark skill deprecated | Skill hidden from main list, available in archive |
-| SKILL-014 | Custom component | Skill defines JSX component | Component served to client, renders correctly |
-| SKILL-015 | Model hints | Skill declares tier=fast | Router uses fast/cheap model |
-| SKILL-016 | Model hints vision | Skill declares modality=vision | Router uses vision-capable model |
+| SKILL-014 | Custom component | Skill defines JSX component | references/components.md served to client |
+| SKILL-015 | Model hints | metadata.attache.tier=fast | Router uses fast/cheap model |
+| SKILL-016 | Model hints vision | metadata.attache.modality=vision | Router uses vision-capable model |
 | SKILL-017 | Environment validation | Skill missing required env | Agent requests user to set secret |
-| SKILL-018 | Consolidation | Merge two skills | New combined skill created, old deprecated |
+| SKILL-018 | Skill consolidation | Merge two skills | New combined skill created, old deprecated |
+| SKILL-019 | agentskills.io compliance | Validate against spec | Passes agentskills.io validation |
+| SKILL-020 | Script execution | Run script from scripts/ | Script executes in sandbox, returns output |
+| SKILL-021 | Inline dependencies | Python script with PEP 723 | Dependencies auto-installed, script runs |
 
 ## Semantic Memory Tests (Factual Knowledge)
 
@@ -230,18 +233,21 @@
 
 | ID | Test Case | Steps | Expected Result |
 |----|-----------|-------|-----------------|
-| PRO-001 | 1st party skill | Agent creates skill autonomously | Stored in Procedural Memory, agent-tagged |
-| PRO-002 | 2nd party skill | User creates custom skill | Stored in Procedural Memory, user-tagged |
-| PRO-003 | 3rd party skill | Import community skill | Stored in Procedural Memory, community-tagged |
+| PRO-001 | 1st party skill | Agent creates SKILL.md autonomously | Stored in Procedural Memory, agent-tagged |
+| PRO-002 | 2nd party skill | User writes SKILL.md | Stored in Procedural Memory, user-tagged |
+| PRO-003 | 3rd party skill | Import agentskills.io skill | Stored in Procedural Memory, community-tagged |
 | PRO-004 | Skill execution | Execute procedural skill | Skill runs from Procedural Memory |
 | PRO-005 | Usage tracking | Skill used 10 times | Usage count incremented |
 | PRO-006 | Success rate | Skill succeeds 8/10 times | Success rate calculated (80%) |
 | PRO-007 | Performance metrics | Track execution times | Avg execution time recorded |
-| PRO-008 | Optimization | Reflection improves skill | Skill updated, optimization logged |
+| PRO-008 | Optimization | Reflection improves skill | SKILL.md updated, optimization logged |
 | PRO-009 | Skill consolidation | Overlapping skills detected | Skills merged, old deprecated |
 | PRO-010 | Self-modification | Skill rewrites itself | New version created, history preserved |
-| PRO-011 | Procedural query | "How do you search?" | Returns web_search skill from Procedural |
+| PRO-011 | Procedural query | "How do you search?" | Returns web-search skill from Procedural |
 | PRO-012 | Skill lookup | Query skill by capability | Returns matching skills |
+| PRO-013 | Directory structure | Skill has scripts/ | Directory structure validated |
+| PRO-014 | agentskills.io fields | SKILL.md with standard fields | name, description, license parsed correctly |
+| PRO-015 | Attaché metadata | SKILL.md with metadata.attache | Extension fields extracted for routing |
 
 ## Memory System Integration Tests
 
@@ -353,7 +359,7 @@
 | PLAT-016 | TUI Filesystem canvas | TUI | Project files are the canvas |
 | PLAT-017 | TUI Command execution | TUI | !cargo test works, output to agent |
 | PLAT-018 | TUI Offline editing | TUI | Edit offline, batch sync on reconnect |
-| PLAT-019 | TUI Local skills | TUI | Skills from .agents/skills available |
+| PLAT-019 | TUI Local skills | TUI | Skills from .agents/skills/<name>/SKILL.md available |
 
 ## TUI Filesystem Canvas Tests
 
@@ -375,7 +381,7 @@
 | TUI-FS-014 | Approve command | Approve non-allowlisted | Command executes |
 | TUI-FS-015 | Deny command | Deny non-allowlisted | Command rejected, no execution |
 | TUI-FS-016 | allow_all bypass | allow_all: true | All commands execute without approval |
-| TUI-FS-017 | Local skill discovery | Skills in .agents/skills | Loaded and available to agent |
+| TUI-FS-017 | Local skill discovery | SKILL.md in .agents/skills/ | Loaded and available to agent |
 | TUI-FS-018 | Local skill precedence | Same name as server skill | Local skill wins |
 | TUI-FS-019 | Readonly local skill | Try to modify local skill | Rejected (filesystem skills readonly) |
 | TUI-FS-020 | Offline detection | Disconnect network | Status shows "offline" |
@@ -608,7 +614,7 @@
 ### End-to-End: TUI Coding Workflow
 
 1. User: `cd ~/projects/my-rust-app && attache-tui`
-2. TUI: Discovers config, loads local skills from `.agents/skills`
+2. TUI: Discovers config, loads local skills from `.agents/skills/<name>/SKILL.md`
 3. User: `!cargo test` (runs tests, output shown)
 4. Agent: Sees test output, one test failed
 5. Agent: "I see a test failed. Let me check the code..."
@@ -651,16 +657,17 @@
 
 ### End-to-End: TUI Local Skills
 
-1. User creates `.agents/skills/rust_linter.yaml`
-2. Skill defines cargo clippy wrapper
-3. User: Starts TUI in project
-4. TUI: Loads local skill
-5. User: "Lint this code"
-6. Agent: Uses local `rust_linter` skill
-7. Skill: Runs clippy, returns structured results
-8. Agent: Displays results as formatted output
-9. User can't modify skill through TUI (readonly)
-10. User edits skill file directly, TUI reloads
+1. User creates `.agents/skills/rust-linter/SKILL.md`
+2. SKILL.md defines cargo clippy wrapper with metadata.attache extensions
+3. User creates `.agents/skills/rust-linter/scripts/lint.py`
+4. User: Starts TUI in project
+5. TUI: Discovers and loads local skill from SKILL.md
+6. User: "Lint this code"
+7. Agent: Uses local `rust-linter` skill
+8. Skill: Runs clippy script, returns structured results
+9. Agent: Displays results as formatted output
+10. User can't modify skill through TUI (readonly)
+11. User edits SKILL.md directly, TUI reloads
 
 ---
 
